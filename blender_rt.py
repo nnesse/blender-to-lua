@@ -47,5 +47,19 @@ def save_brt(operator, context, filepath=""):
 	for struct in structs.values():
 		base_id = getattr(struct.base, "identifier","")
 		file.write("bpy.types.%s (%s)\n" % (struct.identifier, base_id))
+		for prop in struct.properties:
+			if prop.fixed_type is None:
+				file.write("\t%s : %s[%d]\n" % (prop.identifier, prop.type, prop.array_length))
+			else:
+				file.write("\t%s: " % prop.identifier)
+				if prop.type == "collection":
+					file.write("collection")
+					if prop.collection_type:
+						file.write(" (%s)" % prop.collection_type.identifier)
+					file.write(" of %s" % prop.fixed_type.identifier)
+				else:
+					file.write("%s" % prop.fixed_type.identifier)
+
+				file.write("\n")
 	file.close()
 	return {'FINISHED'}
