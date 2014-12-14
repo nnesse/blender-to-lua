@@ -50,8 +50,11 @@ def encode_struct(structs, struct, data):
 		if data_next is None:
 			continue
 		if prop.fixed_type is None:
-			if type(data_next).__name__ in ('bool','float','string','tuple'):
+			type_name = type(data_next).__name__
+			if type_name in ('bool','float','string','tuple'):
 				out[prop.identifier] = data_next
+			elif type_name == "Vector":
+				out[prop.identifier] = data_next.to_tuple()
 			#TODO: Handle blender classes Vector, Color, etc so we actually get all the data
 		if prop.fixed_type:
 			if prop.type == "collection":
@@ -65,7 +68,6 @@ def encode_struct(structs, struct, data):
 
 
 def save_brt(operator, context, filepath=""):
-	scene = context.scene
 	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
 	structs = {}
 
@@ -75,7 +77,7 @@ def save_brt(operator, context, filepath=""):
 
 	file = open(filepath, "wb")
 
-	#Encode blend data as structs and tuples
+	#Encode blend data as dictionaries, tuples, and builtin's only
 	out = encode_struct(structs, structs['BlendData'], context.blend_data)
 	pickle.dump(out, file, 2)
 	file.close()
