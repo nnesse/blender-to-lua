@@ -40,26 +40,43 @@ def unregister():
 	bpy.utils.unregister_module(__name__)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
+def encode_struct(structs, struct, data):
+	out = {}
+	for prop in struct.properties:
+		#TODO: Look at base class properties as well
+		if prop.identifier is None:
+			continue
+		data_next = getattr(data, prop.identifier, None)
+		if data_next is None:
+			continue
+		if prop.fixed_type is None:
+			if type(data_next).__name__ in ('bool','float','string','tuple'):
+				out[prop.identifier] = data_next
+			#TODO: Handle blender classes Vector, Color, etc so we actually get all the data
+		if prop.fixed_type:
+			if prop.type == "collection":
+				collection = {}
+				out[prop.identifier] = collection
+				for key, value in data_next.items():
+					collection[key] = encode_struct(structs, structs[prop.fixed_type.identifier], value)
+			else:
+				out[prop.identifier] = encode_struct(structs, structs[prop.fixed_type.identifier], data_next)
+	return out
+
+
 def save_brt(operator, context, filepath=""):
 	scene = context.scene
-	structs, funcs, ops, props = rna_info.BuildRNAInfo()
-	file = open(filepath, "w", encoding ="utf-8")
-	for struct in structs.values():
-		base_id = getattr(struct.base, "identifier","")
-		file.write("bpy.types.%s (%s)\n" % (struct.identifier, base_id))
-		for prop in struct.properties:
-			if prop.fixed_type is None:
-				file.write("\t%s : %s[%d]\n" % (prop.identifier, prop.type, prop.array_length))
-			else:
-				file.write("\t%s: " % prop.identifier)
-				if prop.type == "collection":
-					file.write("collection")
-					if prop.collection_type:
-						file.write(" (%s)" % prop.collection_type.identifier)
-					file.write(" of %s" % prop.fixed_type.identifier)
-				else:
-					file.write("%s" % prop.fixed_type.identifier)
+	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
+	structs = {}
 
-				file.write("\n")
+	#Convert list of structs into a dictionary
+	for struct in structs_list.values():
+		structs[struct.identifier] = struct
+
+	file = open(filepath, "wb")
+
+	#Encode blend data as structs and tuples
+	out = encode_struct(structs, structs['BlendData'], context.blend_data)
+	pickle.dump(out, file, 2)
 	file.close()
 	return {'FINISHED'}
