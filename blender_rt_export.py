@@ -40,10 +40,19 @@ def unregister():
 	bpy.utils.unregister_module(__name__)
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
+def dearray(a):
+	b = []
+	for i in range(len(a)):
+		if type(a[i]).__name__ == 'bpy_prop_array':
+			b.append(dearray(a[i]))
+		else:
+			b.append(a[i])
+	return b
+
 def encode_struct(structs, struct, data):
 	out = {}
+
 	for prop in struct.properties:
-		#TODO: Look at base class properties as well
 		if prop.identifier is None:
 			continue
 		data_next = getattr(data, prop.identifier, None)
@@ -66,9 +75,12 @@ def encode_struct(structs, struct, data):
 					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple()
 			elif type_name == "Quaternion":
 				out[prop.identifier] = (data_next.x, data_next.y, data_next.z, data_next.w)
+			elif type_name == "bpy_prop_array":
+				out[prop.identifier] = dearray(data_next)
 			else:
-				out[prop.identifier] = type_name
-		if prop.fixed_type:
+				out[prop.identifier] = "unknown:" + type_name
+			#TODO: handle 'Euler' and 'set' types
+		else:
 			if prop.type == "collection":
 				collection = {}
 				out[prop.identifier] = collection
