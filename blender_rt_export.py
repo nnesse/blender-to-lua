@@ -55,6 +55,16 @@ def encode_struct(structs, struct, data):
 				out[prop.identifier] = data_next
 			elif type_name == "Vector":
 				out[prop.identifier] = data_next.to_tuple()
+			elif type_name == "Color":
+				out[prop.identifier] = (data_next.r, data_next.g, data_next.b)
+			elif type_name == "Matrix":
+				if prop.array_length == 16:
+					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple() + data_next[2].to_tuple() + data_next[3].to_tuple()
+				elif prop.array_length == 9:
+					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple() + data_next[2].to_tuple()
+				elif prop.array_length == 4:
+					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple()
+
 			#TODO: Handle blender classes Vector, Color, etc so we actually get all the data
 		if prop.fixed_type:
 			if prop.type == "collection":
