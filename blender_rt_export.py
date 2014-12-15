@@ -51,7 +51,7 @@ def encode_struct(structs, struct, data):
 			continue
 		if prop.fixed_type is None:
 			type_name = type(data_next).__name__
-			if type_name in ('bool','float','string','tuple'):
+			if type_name in ('bool','float','string','str', 'int', 'tuple'):
 				out[prop.identifier] = data_next
 			elif type_name == "Vector":
 				out[prop.identifier] = data_next.to_tuple()
@@ -64,8 +64,10 @@ def encode_struct(structs, struct, data):
 					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple() + data_next[2].to_tuple()
 				elif prop.array_length == 4:
 					out[prop.identifier] = data_next[0].to_tuple() + data_next[1].to_tuple()
-
-			#TODO: Handle blender classes Vector, Color, etc so we actually get all the data
+			elif type_name == "Quaternion":
+				out[prop.identifier] = (data_next.x, data_next.y, data_next.z, data_next.w)
+			else:
+				out[prop.identifier] = type_name
 		if prop.fixed_type:
 			if prop.type == "collection":
 				collection = {}
