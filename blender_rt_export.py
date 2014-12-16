@@ -95,33 +95,41 @@ def encode_property(structs, prop, data, in_id, data_list, data_map):
 	return out
 
 def encode_struct(structs, struct, data, in_id, data_list, data_map):
-	this_is_id = struct.base and struct.base.identifier == 'ID'
+	this_is_id = (struct.base and struct.base.identifier == 'ID') or struct.identifier == 'ID'
 	if this_is_id and in_id:
 		return data.name
 	elif data.as_pointer() in data_map:
 		return data_map[data.as_pointer()]
 	else:
 		out = {}
-		if data_list.get(struct.identifier, None) is None:
-			data_list[struct.identifier] = []
-		data_map[data.as_pointer()] = len(data_list[struct.identifier])
-		data_list[struct.identifier].append(out)
-
 		next_data_list = data_list
-		if this_is_id or struct.identifier == 'BlendData':
+		inline = len(struct.references) == 1 and in_id
+		if not inline:
+			if data_list.get(struct.identifier, None) is None:
+				data_list[struct.identifier] = []
+			data_map[data.as_pointer()] = len(data_list[struct.identifier])
+			data_list[struct.identifier].append(out)
+		if this_is_id:
 			out['z_list'] = {}
 			next_data_list = out['z_list']
 
-		for prop in struct.properties:
-			if prop.identifier is None:
-				continue
-			data_next = getattr(data, prop.identifier, None)
-			if data_next is None:
-				continue
-			value = encode_property(structs, prop, data_next, in_id or this_is_id, next_data_list, data_map)
-			if value is not None:
-				out[prop.identifier] = value
-		return (len(data_list[struct.identifier]) - 1)
+		struct_ = struct
+		while struct_:
+			for prop in struct_.properties:
+				if prop.identifier is None or (prop.is_readonly and prop.type != "collection"):
+					continue
+				data_next = getattr(data, prop.identifier, None)
+				if data_next is None:
+					continue
+				value = encode_property(structs, prop, data_next, in_id or this_is_id, next_data_list, data_map)
+				if value is not None:
+					out[prop.identifier] = value
+			struct_ = struct_.base
+
+		if inline:
+			return out
+		else:
+			return (len(data_list[struct.identifier]) - 1)
 
 
 def save_brt(operator, context, filepath=""):
@@ -138,11 +146,22 @@ def save_brt(operator, context, filepath=""):
 		if x in structs:
 			del structs[x]
 
+
 	file = open(filepath, "wb")
 
-	#Encode blend data as dictionaries, tuples, and builtin's only
-	data_list = {}
-	out = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list, {})
+	#Encode blend data as dictionaries, tuples, and sequences only
+	data_map = {}
+	data_list = {'z_data': {}}
+	data_list['data'] = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list['z_data'], data_map)
+	for x in context.scene.objects:
+		try:
+			mesh = x.to_mesh(context.scene, False, 'PREVIEW', False)
+		except RuntimeError:
+			mesh = None
+		if mesh is None:
+			continue
+		encode_struct(structs, structs['Mesh'], mesh, False, data_list['z_data'], data_map)
+		bpy.data.meshes.remove(mesh)
 	pickle.dump(data_list, file, 2)
 	file.close()
 	return {'FINISHED'}
