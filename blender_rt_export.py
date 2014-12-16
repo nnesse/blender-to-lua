@@ -83,12 +83,15 @@ def encode_property(structs, prop, data, in_id, data_list, data_map):
 	if prop.fixed_type is None:
 		out = encode_basic_property(data, prop.array_length)
 	else:
+		next_struct = structs.get(prop.fixed_type.identifier, None)
+		if next_struct is None:
+			return None
 		if prop.type == "collection":
 			out = {}
 			for key, value in data.items():
-				out[key] = encode_struct(structs, structs[prop.fixed_type.identifier], value, in_id, data_list, data_map)
+				out[key] = encode_struct(structs, next_struct, value, in_id, data_list, data_map)
 		else:
-			out = encode_struct(structs, structs[prop.fixed_type.identifier], data, in_id, data_list, data_map)
+			out = encode_struct(structs, next_struct, data, in_id, data_list, data_map)
 	return out
 
 def encode_struct(structs, struct, data, in_id, data_list, data_map):
@@ -99,16 +102,26 @@ def encode_struct(structs, struct, data, in_id, data_list, data_map):
 		return data_map[data.as_pointer()]
 	else:
 		out = {}
-		data_map[data.as_pointer()] = len(data_list)
-		data_list.append(out)
+		if data_list.get(struct.identifier, None) is None:
+			data_list[struct.identifier] = []
+		data_map[data.as_pointer()] = len(data_list[struct.identifier])
+		data_list[struct.identifier].append(out)
+
+		next_data_list = data_list
+		if this_is_id or struct.identifier == 'BlendData':
+			out['z_list'] = {}
+			next_data_list = out['z_list']
+
 		for prop in struct.properties:
 			if prop.identifier is None:
 				continue
 			data_next = getattr(data, prop.identifier, None)
 			if data_next is None:
 				continue
-			out[prop.identifier] = encode_property(structs, prop, data_next, in_id or this_is_id, data_list, data_map)
-		return (len(data_list) - 1)
+			value = encode_property(structs, prop, data_next, in_id or this_is_id, next_data_list, data_map)
+			if value is not None:
+				out[prop.identifier] = value
+		return (len(data_list[struct.identifier]) - 1)
 
 
 def save_brt(operator, context, filepath=""):
@@ -119,10 +132,16 @@ def save_brt(operator, context, filepath=""):
 	for struct in structs_list.values():
 		structs[struct.identifier] = struct
 
+	#Remove blacklisted struct types
+	blacklist = ['KeyMapItem', 'Brush', 'WindowManager', 'Screen']
+	for x in blacklist:
+		if x in structs:
+			del structs[x]
+
 	file = open(filepath, "wb")
 
 	#Encode blend data as dictionaries, tuples, and builtin's only
-	data_list = []
+	data_list = {}
 	out = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list, {})
 	pickle.dump(data_list, file, 2)
 	file.close()
