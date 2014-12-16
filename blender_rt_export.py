@@ -49,6 +49,7 @@ def encode_prop_array(a, size):
 
 def encode_basic_property(data, size):
 	type_name = type(data).__name__
+	out = ()
 	if type_name in ('bool','float','string','str', 'int', 'tuple'):
 		out = data
 	elif type_name == "Vector":
@@ -66,14 +67,18 @@ def encode_basic_property(data, size):
 		out = (data.x, data.y, data.z, data.w)
 	elif type_name == "Euler":
 		out = (data.x, data.y, data.z, data.order)
-	elif type_name == "bpy_prop_array":
-		out = encode_prop_array(data, size)
+	#TODO: we need another solution for BPY prop array, this is too slow
+	#elif type_name == "bpy_prop_array":
+	#	out = encode_prop_array(data, size)
 	else:
 		out = "unknown:" + type_name
 	#TODO: 'set' types
 	return out
 
-def encode_property(structs, prop, data):
+def struct_has_base(base, struct):
+	return base in struct.get_bases()
+
+def encode_property(structs, prop, data, in_id, data_list, data_map):
 	out = ()
 	if prop.fixed_type is None:
 		out = encode_basic_property(data, prop.array_length)
@@ -81,22 +86,29 @@ def encode_property(structs, prop, data):
 		if prop.type == "collection":
 			out = {}
 			for key, value in data.items():
-				out[key] = encode_struct(structs, structs[prop.fixed_type.identifier], value)
+				out[key] = encode_struct(structs, structs[prop.fixed_type.identifier], value, in_id, data_list, data_map)
 		else:
-			out = encode_struct(structs, structs[prop.fixed_type.identifier], data)
+			out = encode_struct(structs, structs[prop.fixed_type.identifier], data, in_id, data_list, data_map)
 	return out
 
-def encode_struct(structs, struct, data):
-	out = {}
-
-	for prop in struct.properties:
-		if prop.identifier is None:
-			continue
-		data_next = getattr(data, prop.identifier, None)
-		if data_next is None:
-			continue
-		out[prop.identifier] = encode_property(structs, prop, data_next)
-	return out
+def encode_struct(structs, struct, data, in_id, data_list, data_map):
+	this_is_id = struct.base and struct.base.identifier == 'ID'
+	if this_is_id and in_id:
+		return data.name
+	elif data.as_pointer() in data_map:
+		return data_map[data.as_pointer()]
+	else:
+		out = {}
+		data_map[data.as_pointer()] = len(data_list)
+		data_list.append(out)
+		for prop in struct.properties:
+			if prop.identifier is None:
+				continue
+			data_next = getattr(data, prop.identifier, None)
+			if data_next is None:
+				continue
+			out[prop.identifier] = encode_property(structs, prop, data_next, in_id or this_is_id, data_list, data_map)
+		return (len(data_list) - 1)
 
 
 def save_brt(operator, context, filepath=""):
@@ -110,7 +122,8 @@ def save_brt(operator, context, filepath=""):
 	file = open(filepath, "wb")
 
 	#Encode blend data as dictionaries, tuples, and builtin's only
-	out = encode_struct(structs, structs['BlendData'], context.blend_data)
-	pickle.dump(out, file, 2)
+	data_list = []
+	out = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list, {})
+	pickle.dump(data_list, file, 2)
 	file.close()
 	return {'FINISHED'}
