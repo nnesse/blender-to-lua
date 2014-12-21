@@ -41,11 +41,16 @@ def unregister():
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 
-def encode_prop_array(a, size):
-	b = []
+def encode_prop_array(a, out):
+	if len(a) > 1024:
+		return
 	for i in range(len(a)):
-		b.append(encode_basic_property(a[i], size/len(a)))
-	return b
+		b = a[i]
+		if type(b).__name__ == 'bpy_prop_array':
+			encode_prop_array(b, out)
+		else:
+			out.append(b)
+	return out
 
 def encode_basic_property(data, size):
 	type_name = type(data).__name__
@@ -67,16 +72,13 @@ def encode_basic_property(data, size):
 		out = (data.x, data.y, data.z, data.w)
 	elif type_name == "Euler":
 		out = (data.x, data.y, data.z, data.order)
-	#TODO: we need another solution for BPY prop array, this is too slow
-	#elif type_name == "bpy_prop_array":
-	#	out = encode_prop_array(data, size)
+	elif type_name == "bpy_prop_array":
+		out = []
+		encode_prop_array(data, out)
 	else:
 		out = "unknown:" + type_name
 	#TODO: 'set' types
 	return out
-
-def struct_has_base(base, struct):
-	return base in struct.get_bases()
 
 def encode_property(structs, prop, data, in_id, data_list, data_map):
 	out = ()
@@ -151,7 +153,9 @@ def save_brt(operator, context, filepath=""):
 
 	#Encode blend data as dictionaries, tuples, and sequences only
 	data_map = {}
-	data_list = {'z_data': {}}
+	data_list = {}
+	data_list['z_data'] = {}
+	#data_list['structs'] = structs
 	data_list['data'] = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list['z_data'], data_map)
 	for x in context.scene.objects:
 		try:
