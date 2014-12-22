@@ -133,6 +133,31 @@ def encode_struct(structs, struct, data, in_id, data_list, data_map):
 		else:
 			return (len(data_list[struct.identifier]) - 1)
 
+def lua_write(file, data):
+	if type(data).__name__ == 'dict':
+		file.write("{")
+		if len(data) < 1024:
+			for k, v in data.items():
+				file.write("[\"%s\"] = " % str(k))
+				lua_convert(file, v)
+				file.write(", ")
+		file.write("}\n")
+	elif type(data).__name__ == 'list' or type(data).__name__ == 'tuple':
+		file.write("{")
+		if len(data) < 1024:
+			for v in data:
+				lua_convert(file, v)
+				file.write(",")
+		file.write("}\n")
+	elif type(data).__name__ == 'string' or type(data).__name__ == 'str':
+		file.write("'%s'" % data)
+	elif type(data).__name__ == 'bool':
+		if data:
+			file.write("true")
+		else:
+			file.write("false")
+	else:
+		file.write("%s" % str(data))
 
 def save_brt(operator, context, filepath=""):
 	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
@@ -140,22 +165,16 @@ def save_brt(operator, context, filepath=""):
 
 	#Convert list of structs into a dictionary
 	for struct in structs_list.values():
-		structs[struct.identifier] = struct
+		if struct.identifier not in ['KeyMapItem', 'Brush', 'WindowManager', 'Screen']:
+			structs[struct.identifier] = struct
 
-	#Remove blacklisted struct types
-	blacklist = ['KeyMapItem', 'Brush', 'WindowManager', 'Screen']
-	for x in blacklist:
-		if x in structs:
-			del structs[x]
-
-
-	file = open(filepath, "wb")
+	file = open(filepath, "wt")
 
 	#Encode blend data as dictionaries, tuples, and sequences only
 	data_map = {}
 	data_list = {}
 	data_list['z_data'] = {}
-	#data_list['structs'] = structs
+	data_list['structs'] = structs #TODO: make this convert correctly
 	data_list['data'] = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list['z_data'], data_map)
 	for x in context.scene.objects:
 		try:
@@ -166,6 +185,8 @@ def save_brt(operator, context, filepath=""):
 			continue
 		encode_struct(structs, structs['Mesh'], mesh, False, data_list['z_data'], data_map)
 		bpy.data.meshes.remove(mesh)
-	pickle.dump(data_list, file, 2)
+	file.write("return ")
+	lua_write(file, data_list)
+
 	file.close()
 	return {'FINISHED'}
