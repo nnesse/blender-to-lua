@@ -139,18 +139,18 @@ def lua_write(file, data):
 		if len(data) < 1024:
 			for k, v in data.items():
 				file.write("[\"%s\"] = " % str(k))
-				lua_convert(file, v)
+				lua_write(file, v)
 				file.write(", ")
 		file.write("}\n")
 	elif type(data).__name__ == 'list' or type(data).__name__ == 'tuple':
 		file.write("{")
 		if len(data) < 1024:
 			for v in data:
-				lua_convert(file, v)
+				lua_write(file, v)
 				file.write(",")
 		file.write("}\n")
 	elif type(data).__name__ == 'string' or type(data).__name__ == 'str':
-		file.write("'%s'" % data)
+		file.write("\"%s\"" % data.replace('"','\\"'))
 	elif type(data).__name__ == 'bool':
 		if data:
 			file.write("true")
