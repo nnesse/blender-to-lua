@@ -41,123 +41,115 @@ def unregister():
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 
-def encode_prop_array(a, out):
+def encode_string(strings, s):
+	strings.append("'%s'" % s.replace("'","\\'"))
+
+def encode_prop_array(strings, a):
 	if len(a) > 1024:
 		return
 	for i in range(len(a)):
 		b = a[i]
-		if type(b).__name__ == 'bpy_prop_array':
-			encode_prop_array(b, out)
+		type_name = type(b).__name__
+		if type_name == 'bpy_prop_array':
+			encode_prop_array(strings, b)
+		elif type_name in ('string','str'):
+			encode_string(strings, data)
+			strings.append(",")
+		elif type_name == 'bool':
+			if b:
+				strings.append("true,")
+			else:
+				strings.append("false,")
 		else:
-			out.append(b)
-	return out
+			strings.append(str(b))
+			strings.append(",")
+	return
 
-def encode_basic_property(data, size):
+def encode_tuple(strings, t):
+	strings.append("{")
+	for x in t:
+		strings.append("%f," % x)
+	strings.append("}")
+
+def encode_property(strings, data, size):
 	type_name = type(data).__name__
-	out = ()
-	if type_name in ('bool','float','string','str', 'int', 'tuple'):
-		out = data
+	if type_name == 'bool':
+		if data:
+			strings.append("true")
+		else:
+			strings.append("false")
+	elif type_name in ('string','str'):
+		encode_string(strings, data)
+	elif type_name == 'tuple':
+		encode_tuple(strings, data)
+	elif type_name in ('float', 'int'):
+		strings.append(str(data))
 	elif type_name == "Vector":
-		out = data.to_tuple()
+		encode_tuple(strings, data.to_tuple())
 	elif type_name == "Color":
-		out = (data.r, data.g, data.b)
+		encode_tuple(strings, (data.r, data.g, data.b))
 	elif type_name == "Matrix":
+		out = ()
 		if size == 16:
 			out = data[0].to_tuple() + data[1].to_tuple() + data[2].to_tuple() + data[3].to_tuple()
 		elif size == 9:
 			out = data[0].to_tuple() + data[1].to_tuple() + data[2].to_tuple()
 		elif size == 4:
 			out = data[0].to_tuple() + data[1].to_tuple()
+		encode_tuple(strings, out)
 	elif type_name == "Quaternion":
-		out = (data.x, data.y, data.z, data.w)
+		encode_tuple(strings, (data.x, data.y, data.z, data.w))
 	elif type_name == "Euler":
-		out = (data.x, data.y, data.z, data.order)
+		strings.append("{%f,%f,%f,%s}" % (data.x, data.y, data.z, data.order))
 	elif type_name == "bpy_prop_array":
-		out = []
-		encode_prop_array(data, out)
+		strings.append("{")
+		encode_prop_array(strings, data)
+		strings.append("}")
 	else:
-		out = "unknown:" + type_name
+		strings.append("nil")
 	#TODO: 'set' types
-	return out
+	return
 
-def encode_property(structs, prop, data, in_id, data_list, data_map):
-	out = ()
-	if prop.fixed_type is None:
-		out = encode_basic_property(data, prop.array_length)
-	else:
-		next_struct = structs.get(prop.fixed_type.identifier, None)
-		if next_struct is None:
-			return None
-		if prop.type == "collection":
-			out = {}
-			for key, value in data.items():
-				out[key] = encode_struct(structs, next_struct, value, in_id, data_list, data_map)
-		else:
-			out = encode_struct(structs, next_struct, data, in_id, data_list, data_map)
-	return out
-
-def encode_struct(structs, struct, data, in_id, data_list, data_map):
-	this_is_id = (struct.base and struct.base.identifier == 'ID') or struct.identifier == 'ID'
-	if this_is_id and in_id:
-		return data.name
-	elif data.as_pointer() in data_map:
-		return data_map[data.as_pointer()]
-	else:
-		out = {}
-		next_data_list = data_list
-		inline = len(struct.references) == 1 and in_id
-		if not inline:
-			if data_list.get(struct.identifier, None) is None:
-				data_list[struct.identifier] = []
-			data_map[data.as_pointer()] = len(data_list[struct.identifier])
-			data_list[struct.identifier].append(out)
-		if this_is_id:
-			out['z_list'] = {}
-			next_data_list = out['z_list']
-
+def encode_struct(file, structs, struct, data, item_count, data_map):
+	if data.as_pointer() not in data_map:
 		struct_ = struct
+		strings = []
+		data_map[data.as_pointer()] = item_count
+		item_count = item_count + 1
 		while struct_:
 			for prop in struct_.properties:
-				if prop.identifier is None or (prop.is_readonly and prop.type != "collection"):
+				if prop.identifier is None:
 					continue
 				data_next = getattr(data, prop.identifier, None)
 				if data_next is None:
 					continue
-				value = encode_property(structs, prop, data_next, in_id or this_is_id, next_data_list, data_map)
-				if value is not None:
-					out[prop.identifier] = value
+				if prop.fixed_type is not None:
+					next_struct = structs.get(prop.fixed_type.identifier, None)
+					if next_struct is None:
+						continue
+					strings.append("['%s'] = " % prop.identifier.replace("'","\\'"))
+					if prop.type == "collection":
+						strings.append("{")
+						for key, value in data_next.items():
+							index, item_count = encode_struct(file, structs, next_struct, value, item_count, data_map)
+							if type(key).__name__ == 'int':
+								strings.append("[%d] = data[%d]," % (key + 1, index))
+							else:
+								strings.append("['%s'] = data[%d]," % (key.replace("'","\\'"), index))
+						strings.append("}\n")
+					else:
+						index, item_count = encode_struct(file, structs, next_struct, data_next, item_count, data_map)
+						strings.append("data[%d]" % (index))
+				else:
+					strings.append("['%s'] = " % prop.identifier.replace("'","\\'"))
+					encode_property(strings, data_next, prop.array_length)
+				strings.append(",")
 			struct_ = struct_.base
-
-		if inline:
-			return out
-		else:
-			return (len(data_list[struct.identifier]) - 1)
-
-def lua_write(file, data):
-	if type(data).__name__ == 'dict':
-		file.write("{")
-		if len(data) < 1024:
-			for k, v in data.items():
-				file.write("[\"%s\"] = " % str(k))
-				lua_write(file, v)
-				file.write(", ")
+		file.write("data[%d] = {" % data_map[data.as_pointer()])
+		for s in strings:
+			file.write(s)
 		file.write("}\n")
-	elif type(data).__name__ == 'list' or type(data).__name__ == 'tuple':
-		file.write("{")
-		if len(data) < 1024:
-			for v in data:
-				lua_write(file, v)
-				file.write(",")
-		file.write("}\n")
-	elif type(data).__name__ == 'string' or type(data).__name__ == 'str':
-		file.write("\"%s\"" % data.replace('"','\\"'))
-	elif type(data).__name__ == 'bool':
-		if data:
-			file.write("true")
-		else:
-			file.write("false")
-	else:
-		file.write("%s" % str(data))
+	return data_map[data.as_pointer()], item_count
 
 def save_brt(operator, context, filepath=""):
 	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
@@ -170,12 +162,11 @@ def save_brt(operator, context, filepath=""):
 
 	file = open(filepath, "wt")
 
-	#Encode blend data as dictionaries, tuples, and sequences only
+	#Write blend data as LUA script
+	file.write("local data = {}\n")
 	data_map = {}
-	data_list = {}
-	data_list['z_data'] = {}
-	data_list['structs'] = structs #TODO: make this convert correctly
-	data_list['data'] = encode_struct(structs, structs['BlendData'], context.blend_data, False, data_list['z_data'], data_map)
+	item_count = 1
+	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
 	for x in context.scene.objects:
 		try:
 			mesh = x.to_mesh(context.scene, False, 'PREVIEW', False)
@@ -183,10 +174,9 @@ def save_brt(operator, context, filepath=""):
 			mesh = None
 		if mesh is None:
 			continue
-		encode_struct(structs, structs['Mesh'], mesh, False, data_list['z_data'], data_map)
+		index, item_count = encode_struct(file, structs, structs['Mesh'], mesh, item_count, data_map)
 		bpy.data.meshes.remove(mesh)
-	file.write("return ")
-	lua_write(file, data_list)
+	file.write("return {root = %d, ['data'] = data}\n" % root_index);
 
 	file.close()
 	return {'FINISHED'}
