@@ -110,46 +110,71 @@ def encode_property(strings, data, size):
 	#TODO: 'set' types
 	return
 
-def encode_struct(file, structs, struct, data, item_count, data_map):
-	if data.as_pointer() not in data_map:
-		struct_ = struct
-		strings = []
-		data_map[data.as_pointer()] = item_count
-		item_count = item_count + 1
-		while struct_:
-			for prop in struct_.properties:
-				if prop.identifier is None:
+
+def encode_struct_inline(file, strings, structs, struct, data, item_count, data_map):
+	struct_ = struct
+	strings.append("{")
+	while struct_:
+		for prop in struct_.properties:
+			if prop.identifier is None:
+				continue
+			data_next = getattr(data, prop.identifier, None)
+			if data_next is None:
+				continue
+			if prop.fixed_type is not None:
+				next_struct = structs.get(prop.fixed_type.identifier, None)
+				if next_struct is None:
 					continue
-				data_next = getattr(data, prop.identifier, None)
-				if data_next is None:
-					continue
-				if prop.fixed_type is not None:
-					next_struct = structs.get(prop.fixed_type.identifier, None)
-					if next_struct is None:
-						continue
-					strings.append("['%s'] = " % prop.identifier.replace("'","\\'"))
-					if prop.type == "collection":
-						strings.append("{")
-						for key, value in data_next.items():
+				inline = len(next_struct.references) == 1
+				strings.append("['%s']=" % prop.identifier.replace("'","\\'"))
+				if prop.type == "collection":
+					strings.append("{")
+					expected_int_key = 0
+					for key, value in data_next.items():
+						if inline:
+							item_count = encode_struct_inline(file, strings, structs, next_struct, value, item_count, data_map)
+							strings.append(",")
+						else:
 							index, item_count = encode_struct(file, structs, next_struct, value, item_count, data_map)
 							if type(key).__name__ == 'int':
-								strings.append("[%d] = data[%d]," % (key + 1, index))
+								if key == expected_int_key:
+									strings.append("g[%d]," % index)
+									expected_int_key = expected_int_key + 1
+								else:
+									strings.append("[%d]=g[%d]," % (key + 1, index))
+									expected_int_key = key + 1
 							else:
-								strings.append("['%s'] = data[%d]," % (key.replace("'","\\'"), index))
-						strings.append("}\n")
+								strings.append("['%s']=g[%d]," % (key.replace("'","\\'"), index))
+					strings.append("}")
+				else:
+					if inline:
+						item_count = encode_struct_inline(file, strings, structs, next_struct, data_next, item_count, data_map)
 					else:
 						index, item_count = encode_struct(file, structs, next_struct, data_next, item_count, data_map)
-						strings.append("data[%d]" % (index))
-				else:
-					strings.append("['%s'] = " % prop.identifier.replace("'","\\'"))
-					encode_property(strings, data_next, prop.array_length)
-				strings.append(",")
-			struct_ = struct_.base
-		file.write("data[%d] = {" % data_map[data.as_pointer()])
+						strings.append("g[%d]" % (index))
+			else:
+				strings.append("['%s']=" % prop.identifier.replace("'","\\'"))
+				encode_property(strings, data_next, prop.array_length)
+			strings.append(",")
+		struct_ = struct_.base
+	strings.append("}")
+	return item_count
+
+
+def encode_struct(file, structs, struct, data, item_count, data_map):
+	if data.as_pointer() not in data_map:
+		strings = []
+		index = item_count
+		data_map[data.as_pointer()] = index
+		item_count = item_count + 1
+		strings.append("g[%d]=" % index)
+		item_count = encode_struct_inline(file, strings, structs, struct, data, item_count, data_map)
 		for s in strings:
 			file.write(s)
-		file.write("}\n")
-	return data_map[data.as_pointer()], item_count
+		file.write("\n")
+	else:
+		index = data_map[data.as_pointer()]
+	return index, item_count
 
 def save_brt(operator, context, filepath=""):
 	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
@@ -163,10 +188,10 @@ def save_brt(operator, context, filepath=""):
 	file = open(filepath, "wt")
 
 	#Write blend data as LUA script
-	file.write("local data = {}\n")
+	file.write("local g={}\n")
 	data_map = {}
 	item_count = 1
-	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
+	meshes = []
 	for x in context.scene.objects:
 		try:
 			mesh = x.to_mesh(context.scene, False, 'PREVIEW', False)
@@ -174,9 +199,11 @@ def save_brt(operator, context, filepath=""):
 			mesh = None
 		if mesh is None:
 			continue
-		index, item_count = encode_struct(file, structs, structs['Mesh'], mesh, item_count, data_map)
+		meshes.append(mesh)
+	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
+	for mesh in meshes:
 		bpy.data.meshes.remove(mesh)
-	file.write("return {root = %d, ['data'] = data}\n" % root_index);
+	file.write("return g[%d]\n" % root_index);
 
 	file.close()
 	return {'FINISHED'}
