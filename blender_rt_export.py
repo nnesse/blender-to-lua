@@ -13,6 +13,9 @@ bl_info = {
 import bpy
 import rna_info
 import pickle
+import mathutils
+import array
+import bmesh
 from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
@@ -160,6 +163,87 @@ def encode_struct_inline(file, strings, structs, struct, data, item_count, data_
 	strings.append("}")
 	return item_count
 
+def mesh_triangulate(me):
+	bm = bmesh.new()
+	bm.from_mesh(me)
+	bmesh.ops.triangulate(bm, faces=bm.faces)
+	bm.to_mesh(me)
+	bm.free()
+
+#Collect vertex, normal, and UV data together in a single array of structs form
+def write_mesh(write, blob_file, name, mesh):
+	mesh_triangulate(mesh)
+	mesh.calc_normals_split()
+	smooth_groups, num_groups = mesh.calc_smooth_groups()
+
+	#Map polygon loop indicies into a smaller set of verticies. We need a
+	# dictionary to recognize verticies we've seen before, a list to map
+	# loop indicies to vertex numbers, and a list to store vertex data
+	vertex_dict = {}
+	loop_to_vertex_num = [None] * len(mesh.loops)
+	vertex_list = []
+	vertex_group_weights = array.array('H')
+	vertex_group_groups = array.array('H')
+	vertex_weight_counts = array.array('B')
+	for polygon_index, polygon in enumerate(mesh.polygons):
+		for loop_index in polygon.loop_indices:
+			vertex_key_l = [mesh.loops[loop_index].vertex_index, smooth_groups[polygon_index]]
+			for uv_layer in mesh.uv_layers:
+				vertex_key_l.extend(uv_layer.data[loop_index].uv[:])
+			vertex_key = tuple(vertex_key_l)
+
+			if vertex_key in vertex_dict:
+				#We have seen this vertex before
+				vertex_num = vertex_dict[vertex_key]
+			else:
+				#This is a new vertex
+				mesh_loop = mesh.loops[loop_index]
+				vertex = mesh.vertices[mesh_loop.vertex_index]
+				vertex_num = len(vertex_list)
+				vertex_dict[vertex_key] = vertex_num
+				vertex_data = []
+				vertex_data.extend(vertex.undeformed_co[:])
+				vertex_data.extend(mesh_loop.normal[:])
+				for uv_layer in mesh.uv_layers:
+					uv_data = uv_layer.data[loop_index].uv[:]
+					vertex_data.extend(uv_data)
+				for elem in vertex.groups:
+					vertex_group_groups.append(elem.group)
+					vertex_group_weights.append(int(elem.weight * 65535))
+				vertex_weight_counts.append(len(vertex.groups))
+				vertex_list.append(vertex_data)
+			loop_to_vertex_num[loop_index] = vertex_num
+
+	write("['%s'] = {\n" % name)
+	write("blob_offset = %d,\n" % blob_file.tell())
+	write("num_triangles = %d,\n" % len(mesh.polygons))
+	write("num_verticies = %d,\n" % len(vertex_list))
+	write("normals = true,\n")
+	write("num_uv_layers = %d,\n" % len(mesh.uv_layers))
+	write("uv_layers = {")
+	for uv_layer in mesh.uv_layers:
+		write("'%s'," % uv_layer.name)
+	write("},\n");
+	write("num_vertex_weights = %d\n" %  len(vertex_group_groups))
+	write("},\n");
+
+	index_array = array.array('H')
+	vertex_array = array.array('f')
+
+	for polygon_index, polygon in enumerate(mesh.polygons):
+		for loop_index in polygon.loop_indices:
+			index_array.append(loop_to_vertex_num[loop_index])
+
+	for vertex_data in vertex_list:
+		for chan in vertex_data:
+			vertex_array.append(chan);
+
+	index_array.tofile(blob_file)
+	vertex_array.tofile(blob_file)
+	vertex_weight_counts.tofile(blob_file)
+	vertex_group_groups.tofile(blob_file)
+	vertex_group_weights.tofile(blob_file)
+	return
 
 def encode_struct(file, structs, struct, data, item_count, data_map):
 	if data.as_pointer() not in data_map:
@@ -182,16 +266,21 @@ def save_brt(operator, context, filepath=""):
 
 	#Convert list of structs into a dictionary
 	for struct in structs_list.values():
-		if struct.identifier not in ['KeyMapItem', 'Brush', 'WindowManager', 'Screen']:
+		if struct.identifier not in ['KeyMapItem', 'Brush', 'WindowManager', 'Screen', 'Keyframe', 'World']:
 			structs[struct.identifier] = struct
+
+
+	mesh_file_lua = open(filepath + ".mesh.lua", "wt")
+	mesh_file_blob = open(filepath + ".mesh.blob", "wb")
+
+	def write_mesh_lua(s):
+		mesh_file_lua.write(s)
 
 	file = open(filepath, "wt")
 
 	#Write blend data as LUA script
-	file.write("local g={}\n")
-	data_map = {}
-	item_count = 1
-	meshes = []
+	write_mesh_lua("return {\n")
+	arrays = []
 	for x in context.scene.objects:
 		try:
 			mesh = x.to_mesh(context.scene, False, 'PREVIEW', False)
@@ -199,11 +288,17 @@ def save_brt(operator, context, filepath=""):
 			mesh = None
 		if mesh is None:
 			continue
-		meshes.append(mesh)
-	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
-	for mesh in meshes:
+		write_mesh(write_mesh_lua, mesh_file_blob, x.name, mesh)
 		bpy.data.meshes.remove(mesh)
+	write_mesh_lua("}\n")
+
+	data_map = {}
+	item_count = 1
+	file.write("local g={}\n")
+	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
 	file.write("return g[%d]\n" % root_index);
 
+	mesh_file_lua.close()
+	mesh_file_blob.close()
 	file.close()
 	return {'FINISHED'}
