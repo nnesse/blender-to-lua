@@ -133,21 +133,24 @@ def encode_struct_inline(file, strings, structs, struct, data, item_count, data_
 				if prop.type == "collection":
 					strings.append("{")
 					expected_int_key = 0
+
+					if data_next.keys() != range(0, len(data_next)) and len(data_next.keys()) > 0:
+						strings.append("keys = {")
+						for i, key in enumerate(data_next.keys()):
+							if type(key).__name__ == 'int':
+								strings.append("[%d]=%d," % (key + 1, i))
+								expected_int_key = key + 1
+							else:
+								strings.append("['%s']=%d," % (key.replace("'","\\'"), i))
+						strings.append("},")
+
 					for key, value in data_next.items():
 						if inline:
 							item_count = encode_struct_inline(file, strings, structs, next_struct, value, item_count, data_map)
 							strings.append(",")
 						else:
 							index, item_count = encode_struct(file, structs, next_struct, value, item_count, data_map)
-							if type(key).__name__ == 'int':
-								if key == expected_int_key:
-									strings.append("g[%d]," % index)
-									expected_int_key = expected_int_key + 1
-								else:
-									strings.append("[%d]=g[%d]," % (key + 1, index))
-									expected_int_key = key + 1
-							else:
-								strings.append("['%s']=g[%d]," % (key.replace("'","\\'"), index))
+							strings.append("g[%d]," % index)
 					strings.append("}")
 				else:
 					if inline:
@@ -176,48 +179,49 @@ def write_mesh(write, blob_file, name, mesh):
 	mesh.calc_normals_split()
 	smooth_groups, num_groups = mesh.calc_smooth_groups()
 
-	#Map polygon loop indicies into a smaller set of verticies. We need a
-	# dictionary to recognize verticies we've seen before, a list to map
-	# loop indicies to vertex numbers, and a list to store vertex data
-	vertex_dict = {}
-	loop_to_vertex_num = [None] * len(mesh.loops)
-	vertex_list = []
-	vertex_group_weights = array.array('H')
-	vertex_group_groups = array.array('H')
-	vertex_weight_counts = array.array('B')
+	if len(mesh.polygons) == 0:
+		return
+
+	vertex_dict = {} #Dictionary to identify when a vertex is shared by multiple triangles
+	loop_to_vertex_num = [None] * len(mesh.loops) #Vertex index in output array for a loop
+	index_array = array.array('H')  #Vertex index triplets for mesh triangles
+	vertex_array = array.array('f') #Per vertex floating point data (interleaved)
+	vertex_weight_counts = array.array('B') # Number of weights in each vertex
+	vertex_group_weights = array.array('H') # Vertex weights
+	vertex_group_groups = array.array('H')  # Vertex weight group #'s
+	vertex_count = 0
+
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		for loop_index in polygon.loop_indices:
 			vertex_key_l = [mesh.loops[loop_index].vertex_index, smooth_groups[polygon_index]]
 			for uv_layer in mesh.uv_layers:
-				vertex_key_l.extend(uv_layer.data[loop_index].uv[:])
+				vertex_key_l.extend(uv_layer.data[loop_index].uv)
 			vertex_key = tuple(vertex_key_l)
 
 			if vertex_key in vertex_dict:
-				#We have seen this vertex before
 				vertex_num = vertex_dict[vertex_key]
 			else:
-				#This is a new vertex
 				mesh_loop = mesh.loops[loop_index]
 				vertex = mesh.vertices[mesh_loop.vertex_index]
-				vertex_num = len(vertex_list)
-				vertex_dict[vertex_key] = vertex_num
-				vertex_data = []
-				vertex_data.extend(vertex.undeformed_co[:])
-				vertex_data.extend(mesh_loop.normal[:])
+				vertex_dict[vertex_key] = vertex_count
+				vertex_num = vertex_count
+				vertex_count = vertex_count + 1
+				vertex_array.extend(vertex.undeformed_co)
+				vertex_array.extend(mesh_loop.normal)
+
 				for uv_layer in mesh.uv_layers:
-					uv_data = uv_layer.data[loop_index].uv[:]
-					vertex_data.extend(uv_data)
+					vertex_array.extend(uv_layer.data[loop_index].uv)
+
 				for elem in vertex.groups:
 					vertex_group_groups.append(elem.group)
-					vertex_group_weights.append(int(elem.weight * 65535))
+					vertex_group_weights.append(int(elem.weight * 256 * 128))
 				vertex_weight_counts.append(len(vertex.groups))
-				vertex_list.append(vertex_data)
 			loop_to_vertex_num[loop_index] = vertex_num
 
 	write("['%s'] = {\n" % name)
 	write("blob_offset = %d,\n" % blob_file.tell())
 	write("num_triangles = %d,\n" % len(mesh.polygons))
-	write("num_verticies = %d,\n" % len(vertex_list))
+	write("num_verticies = %d,\n" % vertex_count)
 	write("normals = true,\n")
 	write("num_uv_layers = %d,\n" % len(mesh.uv_layers))
 	write("uv_layers = {")
@@ -227,16 +231,9 @@ def write_mesh(write, blob_file, name, mesh):
 	write("num_vertex_weights = %d\n" %  len(vertex_group_groups))
 	write("},\n");
 
-	index_array = array.array('H')
-	vertex_array = array.array('f')
-
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		for loop_index in polygon.loop_indices:
 			index_array.append(loop_to_vertex_num[loop_index])
-
-	for vertex_data in vertex_list:
-		for chan in vertex_data:
-			vertex_array.append(chan);
 
 	index_array.tofile(blob_file)
 	vertex_array.tofile(blob_file)
