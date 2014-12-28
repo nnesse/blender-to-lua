@@ -3,7 +3,7 @@ bl_info = {
 	"author": "Neils Nesse",
 	"blender": (2, 69, 0),
 	"location": "File > Import-Export",
-	"description": "Format storing a subset of blender RNA data for use in real-time renderers",
+	"description": "Write blend data to a LUA script + a binary blob",
 	"warning": "",
 	"wiki_url": "",
 	"tracker_url": "",
@@ -16,6 +16,65 @@ import array
 import bmesh
 from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
+
+#
+# root table:
+#
+# 	meshes = {[mesh_name] = mesh, ...}
+# 	actions = {[action_name] = action, ...}
+#	armatures = {[armature_name] = armature, ...}
+#
+# mesh table:
+#
+#	num_triangles             : Number of triangles in mesh
+#	num_vertices              : Number of verticies in mesh
+#	normals                   : true if normals are stored in the mesh data
+#	num_uv_layers             : Number of uv layers stored in mesh data
+#	num_vertex_weights        : Total number of vertex weights stored in mesh data
+#	blob_offset               : Offset of mesh data in binary blob
+#
+# mesh blob data:
+#
+#	uint16_t triangle_indicies[num_triangles][3];
+#	struct {
+#		float coord[3];
+#		float normal[normals ? 3 : 0];
+#		float uv[num_uv_layers][2];
+#	} vertex_data[num_verticies];
+#	uint8_t vertex_weight_counts[num_verticies];       // Number of vertex weights for each vertex
+#	uint16_t vertex_group_groups[num_vertex_weights];  // Group number for each vertex weight
+#	uint16_t vertex_group_weights[num_vertex_weights]; // Fixed point weight of each vertex with 15 fractional bits
+#	                                                   // i.e. maximum weight is 2.0f
+#
+#	Weights for vertex N will be stored at the index: sum(vertex_weight_counts[i] for i in 0..(N-1)).
+#
+# action table:
+#
+#	frame_start            : First frame of action
+#       frame_end              : Last frame of action
+#       step                   : Frames between samples (float)
+#       num_samples            : Number of samples in action
+#       num_fcurves            : Number of fcurves
+#	blob_offset            : Offset of action data in binary blob
+#	{fcurve, fcurve, ...}
+#
+# action blob data:
+#
+#	float samples[num_samples][num_fcurves];
+#
+# fcurve table:
+#
+#	path                   : Path of property controlled by the curve
+#	array_index            : Array index within property (for vector/matrix types)
+#
+# armature table:
+#	bones = {['bone_name'] = {bone}, ...}
+#
+# bone table:
+#	tail   : location of tail of bone in object space (vec3)
+#	matrix : Bone to object space transform
+#	parent : Name of parent bone or nil of the bone has no parent
+#
 
 class export_BRT(bpy.types.Operator, ExportHelper):
 	"""Save a BRT File"""
@@ -154,18 +213,20 @@ def write_mesh(write, blob_file, name, mesh):
 	return
 
 def write_bone(write, blob_file, bone):
-	write("\t\t[%s] = {\n" % lua_string(bone.name))
-	write("\t\t\ttail=%s,\n" % lua_vec3(bone.tail))
-	write("\t\t\tmatrix=%s,\n" % lua_mat4(bone.matrix_local))
+	write("\t\t\t[%s] = {\n" % lua_string(bone.name))
+	write("\t\t\t\ttail=%s,\n" % lua_vec3(bone.tail_local))
+	write("\t\t\t\tmatrix=%s,\n" % lua_mat4(bone.matrix_local))
 	if bone.parent:
-		write("\t\t\tparent=%s,\n" % lua_string(bone.parent.name))
-	write("\t\t},\n")
+		write("\t\t\t\tparent=%s,\n" % lua_string(bone.parent.name))
+	write("\t\t\t},\n")
 	return
 
 def write_armature(write, blob_file, armature):
 	write("\t[%s] = {\n" % lua_string(armature.name))
+	write("\t\tbones = {")
 	for bone in armature.bones:
 		write_bone(write, blob_file, bone)
+	write("\t\t}")
 	write("\t}\n")
 	return
 
