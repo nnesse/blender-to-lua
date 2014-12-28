@@ -11,8 +11,6 @@ bl_info = {
 	"category": "Import-Export"}
 
 import bpy
-import rna_info
-import pickle
 import mathutils
 import array
 import bmesh
@@ -44,128 +42,6 @@ def unregister():
 	bpy.types.INFO_MT_file_export.remove(menu_func_export)
 
 
-def encode_string(strings, s):
-	strings.append("'%s'" % s.replace("'","\\'"))
-
-def encode_prop_array(strings, a):
-	if len(a) > 1024:
-		return
-	for i in range(len(a)):
-		b = a[i]
-		type_name = type(b).__name__
-		if type_name == 'bpy_prop_array':
-			encode_prop_array(strings, b)
-		elif type_name in ('string','str'):
-			encode_string(strings, data)
-			strings.append(",")
-		elif type_name == 'bool':
-			if b:
-				strings.append("true,")
-			else:
-				strings.append("false,")
-		else:
-			strings.append(str(b))
-			strings.append(",")
-	return
-
-def encode_tuple(strings, t):
-	strings.append("{")
-	for x in t:
-		strings.append("%f," % x)
-	strings.append("}")
-
-def encode_property(strings, data, size):
-	type_name = type(data).__name__
-	if type_name == 'bool':
-		if data:
-			strings.append("true")
-		else:
-			strings.append("false")
-	elif type_name in ('string','str'):
-		encode_string(strings, data)
-	elif type_name == 'tuple':
-		encode_tuple(strings, data)
-	elif type_name in ('float', 'int'):
-		strings.append(str(data))
-	elif type_name == "Vector":
-		encode_tuple(strings, data.to_tuple())
-	elif type_name == "Color":
-		encode_tuple(strings, (data.r, data.g, data.b))
-	elif type_name == "Matrix":
-		out = ()
-		if size == 16:
-			out = data[0].to_tuple() + data[1].to_tuple() + data[2].to_tuple() + data[3].to_tuple()
-		elif size == 9:
-			out = data[0].to_tuple() + data[1].to_tuple() + data[2].to_tuple()
-		elif size == 4:
-			out = data[0].to_tuple() + data[1].to_tuple()
-		encode_tuple(strings, out)
-	elif type_name == "Quaternion":
-		encode_tuple(strings, (data.x, data.y, data.z, data.w))
-	elif type_name == "Euler":
-		strings.append("{%f,%f,%f,%s}" % (data.x, data.y, data.z, data.order))
-	elif type_name == "bpy_prop_array":
-		strings.append("{")
-		encode_prop_array(strings, data)
-		strings.append("}")
-	else:
-		strings.append("nil")
-	#TODO: 'set' types
-	return
-
-
-def encode_struct_inline(file, strings, structs, struct, data, item_count, data_map):
-	struct_ = struct
-	strings.append("{")
-	while struct_:
-		for prop in struct_.properties:
-			if prop.identifier is None:
-				continue
-			data_next = getattr(data, prop.identifier, None)
-			if data_next is None:
-				continue
-			if prop.fixed_type is not None:
-				next_struct = structs.get(prop.fixed_type.identifier, None)
-				if next_struct is None:
-					continue
-				inline = len(next_struct.references) == 1
-				strings.append("['%s']=" % prop.identifier.replace("'","\\'"))
-				if prop.type == "collection":
-					strings.append("{")
-					expected_int_key = 0
-
-					if data_next.keys() != range(0, len(data_next)) and len(data_next.keys()) > 0:
-						strings.append("keys = {")
-						for i, key in enumerate(data_next.keys()):
-							if type(key).__name__ == 'int':
-								strings.append("[%d]=%d," % (key + 1, i))
-								expected_int_key = key + 1
-							else:
-								strings.append("['%s']=%d," % (key.replace("'","\\'"), i))
-						strings.append("},")
-
-					for key, value in data_next.items():
-						if inline:
-							item_count = encode_struct_inline(file, strings, structs, next_struct, value, item_count, data_map)
-							strings.append(",")
-						else:
-							index, item_count = encode_struct(file, structs, next_struct, value, item_count, data_map)
-							strings.append("g[%d]," % index)
-					strings.append("}")
-				else:
-					if inline:
-						item_count = encode_struct_inline(file, strings, structs, next_struct, data_next, item_count, data_map)
-					else:
-						index, item_count = encode_struct(file, structs, next_struct, data_next, item_count, data_map)
-						strings.append("g[%d]" % (index))
-			else:
-				strings.append("['%s']=" % prop.identifier.replace("'","\\'"))
-				encode_property(strings, data_next, prop.array_length)
-			strings.append(",")
-		struct_ = struct_.base
-	strings.append("}")
-	return item_count
-
 def mesh_triangulate(me):
 	bm = bmesh.new()
 	bm.from_mesh(me)
@@ -173,7 +49,33 @@ def mesh_triangulate(me):
 	bm.to_mesh(me)
 	bm.free()
 
-#Collect vertex, normal, and UV data together in a single array of structs form
+def lua_string(s):
+	return "'%s'" % s.replace("'","\\'")
+
+def write_action(write, blob_file, action):
+	write("\t[%s]={\n" % lua_string(action.name))
+	frame_start = action.frame_range[0]
+	frame_end = action.frame_range[1]
+	write("\t\tframe_start=%d,\n" % frame_start)
+	write("\t\tframe_end=%d,\n" % frame_end)
+	write("\t\tstep=1.0,\n")
+	write("\t\tblob_offset=%d,\n" % blob_file.tell())
+	write("\t\tnum_fcurves=%d,\n" % len(action.fcurves))
+	for fcurve in action.fcurves:
+		write("\t\t{path=%s,array_index=%d},\n" % (lua_string(fcurve.data_path), fcurve.array_index))
+
+	samples_array = array.array('f')
+	frame = frame_start
+	num_samples = 0
+	while frame <= frame_end:
+		for fcurve in action.fcurves:
+			samples_array.append(fcurve.evaluate(frame))
+		frame += 1.0
+		num_samples = num_samples + 1
+	samples_array.tofile(blob_file)
+	write("\t\tnum_samples=%d\n" % num_samples)
+	write("\t},\n")
+
 def write_mesh(write, blob_file, name, mesh):
 	mesh_triangulate(mesh)
 	mesh.calc_normals_split()
@@ -218,18 +120,18 @@ def write_mesh(write, blob_file, name, mesh):
 				vertex_weight_counts.append(len(vertex.groups))
 			loop_to_vertex_num[loop_index] = vertex_num
 
-	write("['%s'] = {\n" % name)
-	write("blob_offset = %d,\n" % blob_file.tell())
-	write("num_triangles = %d,\n" % len(mesh.polygons))
-	write("num_verticies = %d,\n" % vertex_count)
-	write("normals = true,\n")
-	write("num_uv_layers = %d,\n" % len(mesh.uv_layers))
-	write("uv_layers = {")
+	write("\t['%s'] = {\n" % name)
+	write("\t\tblob_offset = %d,\n" % blob_file.tell())
+	write("\t\tnum_triangles = %d,\n" % len(mesh.polygons))
+	write("\t\tnum_verticies = %d,\n" % vertex_count)
+	write("\t\tnormals = true,\n")
+	write("\t\tnum_uv_layers = %d,\n" % len(mesh.uv_layers))
+	write("\t\tuv_layers = {")
 	for uv_layer in mesh.uv_layers:
-		write("'%s'," % uv_layer.name)
+		write("%s," % lua_string(uv_layer.name))
 	write("},\n");
-	write("num_vertex_weights = %d\n" %  len(vertex_group_groups))
-	write("},\n");
+	write("\t\tnum_vertex_weights = %d\n" %  len(vertex_group_groups))
+	write("\t},\n");
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		for loop_index in polygon.loop_indices:
@@ -242,41 +144,19 @@ def write_mesh(write, blob_file, name, mesh):
 	vertex_group_weights.tofile(blob_file)
 	return
 
-def encode_struct(file, structs, struct, data, item_count, data_map):
-	if data.as_pointer() not in data_map:
-		strings = []
-		index = item_count
-		data_map[data.as_pointer()] = index
-		item_count = item_count + 1
-		strings.append("g[%d]=" % index)
-		item_count = encode_struct_inline(file, strings, structs, struct, data, item_count, data_map)
-		for s in strings:
-			file.write(s)
-		file.write("\n")
-	else:
-		index = data_map[data.as_pointer()]
-	return index, item_count
-
 def save_brt(operator, context, filepath=""):
-	structs_list, funcs, ops, props = rna_info.BuildRNAInfo()
-	structs = {}
+	lua_file = open(filepath + ".lua", "wt")
+	blob_file = open(filepath + ".blob", "wb")
 
-	#Convert list of structs into a dictionary
-	for struct in structs_list.values():
-		if struct.identifier not in ['KeyMapItem', 'Brush', 'WindowManager', 'Screen', 'Keyframe', 'World']:
-			structs[struct.identifier] = struct
-
-
-	mesh_file_lua = open(filepath + ".mesh.lua", "wt")
-	mesh_file_blob = open(filepath + ".mesh.blob", "wb")
-
-	def write_mesh_lua(s):
-		mesh_file_lua.write(s)
+	def write_lua(s):
+		lua_file.write(s)
 
 	file = open(filepath, "wt")
 
 	#Write blend data as LUA script
-	write_mesh_lua("return {\n")
+	write_lua("return {\n")
+
+	write_lua("meshes={\n")
 	arrays = []
 	for x in context.scene.objects:
 		try:
@@ -285,17 +165,15 @@ def save_brt(operator, context, filepath=""):
 			mesh = None
 		if mesh is None:
 			continue
-		write_mesh(write_mesh_lua, mesh_file_blob, x.name, mesh)
+		write_mesh(write_lua, blob_file, x.name, mesh)
 		bpy.data.meshes.remove(mesh)
-	write_mesh_lua("}\n")
+	write_lua("},\n")
+	write_lua("actions={\n")
+	for action in context.blend_data.actions:
+		write_action(write_lua, blob_file, action)
+	write_lua("},\n")
+	write_lua("}\n")
 
-	data_map = {}
-	item_count = 1
-	file.write("local g={}\n")
-	root_index, item_count = encode_struct(file, structs, structs['BlendData'], context.blend_data, item_count, data_map)
-	file.write("return g[%d]\n" % root_index);
-
-	mesh_file_lua.close()
-	mesh_file_blob.close()
-	file.close()
+	lua_file.close()
+	blob_file.close()
 	return {'FINISHED'}
