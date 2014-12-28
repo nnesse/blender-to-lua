@@ -52,6 +52,15 @@ def mesh_triangulate(me):
 def lua_string(s):
 	return "'%s'" % s.replace("'","\\'")
 
+def lua_vec3(v):
+	return "{%f,%f,%f}" % v.to_tuple()
+
+def lua_vec4(v):
+	return "{%f,%f,%f,%f}" % v.to_tuple()
+
+def lua_mat4(m):
+	return "{%s, %s, %s, %s}" % tuple(lua_vec4(m[i]) for i in range(4))
+
 def write_action(write, blob_file, action):
 	write("\t[%s]={\n" % lua_string(action.name))
 	frame_start = action.frame_range[0]
@@ -144,6 +153,22 @@ def write_mesh(write, blob_file, name, mesh):
 	vertex_group_weights.tofile(blob_file)
 	return
 
+def write_bone(write, blob_file, bone):
+	write("\t\t[%s] = {\n" % lua_string(bone.name))
+	write("\t\t\ttail=%s,\n" % lua_vec3(bone.tail))
+	write("\t\t\tmatrix=%s,\n" % lua_mat4(bone.matrix_local))
+	if bone.parent:
+		write("\t\t\tparent=%s,\n" % lua_string(bone.parent.name))
+	write("\t\t},\n")
+	return
+
+def write_armature(write, blob_file, armature):
+	write("\t[%s] = {\n" % lua_string(armature.name))
+	for bone in armature.bones:
+		write_bone(write, blob_file, bone)
+	write("\t}\n")
+	return
+
 def save_brt(operator, context, filepath=""):
 	lua_file = open(filepath + ".lua", "wt")
 	blob_file = open(filepath + ".blob", "wb")
@@ -172,6 +197,11 @@ def save_brt(operator, context, filepath=""):
 	for action in context.blend_data.actions:
 		write_action(write_lua, blob_file, action)
 	write_lua("},\n")
+	write_lua("armatures={\n")
+	for armature in context.blend_data.armatures:
+		write_armature(write_lua, blob_file, armature)
+	write_lua("},\n")
+
 	write_lua("}\n")
 
 	lua_file.close()
