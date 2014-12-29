@@ -21,58 +21,87 @@ from bpy_extras.io_utils import (ExportHelper)
 # root table:
 #
 # 	meshes = {[mesh_name] = mesh, ...}
+#
 # 	actions = {[action_name] = action, ...}
+#
 #	armatures = {[armature_name] = armature, ...}
 #
 # mesh table:
 #
-#	num_triangles             : Number of triangles in mesh
-#	num_vertices              : Number of verticies in mesh
-#	normals                   : true if normals are stored in the mesh data
-#	num_uv_layers             : Number of uv layers stored in mesh data
-#	num_vertex_weights        : Total number of vertex weights stored in mesh data
-#	blob_offset               : Offset of mesh data in binary blob
+#	num_triangles                 : Number of triangles in mesh
 #
-# mesh blob data:
+#	num_vertices                  : Number of verticies in mesh
 #
-#	uint16_t triangle_indicies[num_triangles][3];
-#	struct {
-#		float coord[3];
-#		float normal[normals ? 3 : 0];
-#		float uv[num_uv_layers][2];
-#	} vertex_data[num_verticies];
-#	uint8_t vertex_weight_counts[num_verticies];       // Number of vertex weights for each vertex
-#	uint16_t vertex_group_groups[num_vertex_weights];  // Group number for each vertex weight
-#	uint16_t vertex_group_weights[num_vertex_weights]; // Fixed point weight of each vertex with 15 fractional bits
-#	                                                   // i.e. maximum weight is 2.0f
+#	normals                       : true if normals are stored in the mesh data
 #
-#	Weights for vertex N will be stored at the index: sum(vertex_weight_counts[i] for i in 0..(N-1)).
+#	num_uv_layers                 : Number of uv layers stored in mesh data
+#
+#	uv_layers = {layer_name, ...} : Names of UV layers
+#
+#	num_vertex_weights            : Total number of vertex weights stored in mesh data
+#
+#	index_array_offset            : Vertex array indicies for mesh triangles (blob)
+#
+#		uint16_t index_array[num_triangles][3]; //Indicies into vertex arrays
+#
+#	vertex_co_array_offset        : Vertex coordinates (blob)
+#
+#		float coord_array[num_verticies][3];
+#
+#	vertex_normal_array_offset    : Vertex normals (blob)
+#
+#		float normal_array[num_verticies][3];
+#
+#	uv_array_offset               : UV coordinate arrays (blob)
+#
+#		float uv[num_verticies][num_uv_layers][2];
+#
+#	weight_count_array_offset     : Number of weights in for each vertex (blob)
+#
+#		uint8_t weight_count_array[num_verticies];
+#
+#	weight_array_offset           : Vertex weights for all verticies concatenated in order (blob)
+#
+# 		uint16_t weight_array[num_vertex_weights]; //15 bit unsigned fixed point weights (i.e. 2.0f max)
+#
+#	group_index_array_offset      : Group indicies for vertex weight's
+#
+#		uint16_t group_index_array[num_vertex_weights]; //Indicies into vertex group array
 #
 # action table:
 #
 #	frame_start            : First frame of action
+#
 #       frame_end              : Last frame of action
+#
 #       step                   : Frames between samples (float)
-#       num_samples            : Number of samples in action
+#
+#       num_samples            : Number of fcurve samples in action
+#
 #       num_fcurves            : Number of fcurves
-#	blob_offset            : Offset of action data in binary blob
-#	{fcurve, fcurve, ...}
 #
-# action blob data:
+#	samples_array_offset   : FCurve samples (blob)
 #
-#	float samples[num_samples][num_fcurves];
+#		float samples[num_samples][num_fcurves];
+#
+#	{fcurve, fcurve, ...}  : Function curves
 #
 # fcurve table:
 #
 #	path                   : Path of property controlled by the curve
+#
 #	array_index            : Array index within property (for vector/matrix types)
 #
 # armature table:
+#
 #	bones = {['bone_name'] = {bone}, ...}
 #
 # bone table:
+#
 #	tail   : location of tail of bone in object space (vec3)
+#
 #	matrix : Bone to object space transform
+#
 #	parent : Name of parent bone or nil of the bone has no parent
 #
 
@@ -144,7 +173,7 @@ def write_action(write, blob_file, action):
 	write("\t\tnum_samples=%d\n" % num_samples)
 	write("\t},\n")
 
-def write_mesh(write, blob_file, name, mesh):
+def write_mesh(write, blob_file, name, mesh, obj):
 	mesh_triangulate(mesh)
 	mesh.calc_normals_split()
 	smooth_groups, num_groups = mesh.calc_smooth_groups()
@@ -155,10 +184,12 @@ def write_mesh(write, blob_file, name, mesh):
 	vertex_dict = {} #Dictionary to identify when a vertex is shared by multiple triangles
 	loop_to_vertex_num = [None] * len(mesh.loops) #Vertex index in output array for a loop
 	index_array = array.array('H')  #Vertex index triplets for mesh triangles
-	vertex_array = array.array('f') #Per vertex floating point data (interleaved)
-	vertex_weight_counts = array.array('B') # Number of weights in each vertex
-	vertex_group_weights = array.array('H') # Vertex weights
-	vertex_group_groups = array.array('H')  # Vertex weight group #'s
+	vertex_co_array = array.array('f') #Vertex coordinates
+	vertex_normal_array = array.array('f') #Vertex normals
+	uv_array = array.array('f') #Vertex normals
+	weight_count_array = array.array('B') # Number of weights in each vertex
+	weight_array = array.array('H') # Vertex weights
+	group_index_array = array.array('H') # Vertex group indicies
 	vertex_count = 0
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
@@ -176,40 +207,47 @@ def write_mesh(write, blob_file, name, mesh):
 				vertex_dict[vertex_key] = vertex_count
 				vertex_num = vertex_count
 				vertex_count = vertex_count + 1
-				vertex_array.extend(vertex.undeformed_co)
-				vertex_array.extend(mesh_loop.normal)
+				vertex_co_array.extend(vertex.undeformed_co)
+				vertex_normal_array.extend(mesh_loop.normal)
 
 				for uv_layer in mesh.uv_layers:
-					vertex_array.extend(uv_layer.data[loop_index].uv)
+					uv_array.extend(uv_layer.data[loop_index].uv)
 
 				for elem in vertex.groups:
-					vertex_group_groups.append(elem.group)
-					vertex_group_weights.append(int(elem.weight * 256 * 128))
-				vertex_weight_counts.append(len(vertex.groups))
+					group_index_array.append(elem.group)
+					weight_array.append(int(elem.weight * 256 * 128))
+				weight_count_array.append(len(vertex.groups))
 			loop_to_vertex_num[loop_index] = vertex_num
 
 	write("\t['%s'] = {\n" % name)
-	write("\t\tblob_offset = %d,\n" % blob_file.tell())
 	write("\t\tnum_triangles = %d,\n" % len(mesh.polygons))
 	write("\t\tnum_verticies = %d,\n" % vertex_count)
-	write("\t\tnormals = true,\n")
 	write("\t\tnum_uv_layers = %d,\n" % len(mesh.uv_layers))
 	write("\t\tuv_layers = {")
 	for uv_layer in mesh.uv_layers:
 		write("%s," % lua_string(uv_layer.name))
 	write("},\n");
-	write("\t\tnum_vertex_weights = %d\n" %  len(vertex_group_groups))
-	write("\t},\n");
+	write("\t\tnum_vertex_weights = %d\n" %  len(weight_array))
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		for loop_index in polygon.loop_indices:
 			index_array.append(loop_to_vertex_num[loop_index])
 
+	write("\t\tindex_array_offset = %d,\n" % blob_file.tell())
 	index_array.tofile(blob_file)
-	vertex_array.tofile(blob_file)
-	vertex_weight_counts.tofile(blob_file)
-	vertex_group_groups.tofile(blob_file)
-	vertex_group_weights.tofile(blob_file)
+	write("\t\tvertex_co_array_offset = %d,\n" % blob_file.tell())
+	vertex_co_array.tofile(blob_file)
+	write("\t\tvertex_normal_array_offset = %d,\n" % blob_file.tell())
+	vertex_normal_array.tofile(blob_file)
+	write("\t\tuv_array_offset = %d,\n" % blob_file.tell())
+	uv_array.tofile(blob_file)
+	write("\t\tweight_count_array_offset = %d,\n" % blob_file.tell())
+	weight_count_array.tofile(blob_file)
+	write("\t\tweight_array_offset = %d,\n" % blob_file.tell())
+	weight_array.tofile(blob_file)
+	write("\t\tgroup_index_array_offset = %d,\n" % blob_file.tell())
+	group_index_array.tofile(blob_file)
+	write("\t},\n");
 	return
 
 def write_bone(write, blob_file, bone):
@@ -251,7 +289,7 @@ def save_brt(operator, context, filepath=""):
 			mesh = None
 		if mesh is None:
 			continue
-		write_mesh(write_lua, blob_file, x.name, mesh)
+		write_mesh(write_lua, blob_file, x.name, mesh, x)
 		bpy.data.meshes.remove(mesh)
 	write_lua("},\n")
 	write_lua("actions={\n")
