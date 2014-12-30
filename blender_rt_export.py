@@ -38,7 +38,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	rotation_euler      : Euler rotation values if rotation_mode is 'XYZ' or some permulation thereof
 #
-#	rotation_quaternion : Quaternion expressed as {x,y,z,w} if rotation_mode is 'QUATERNION'
+#	rotation_quaternion : Quaternion expressed as {w,x,y,z} if rotation_mode is 'QUATERNION'
 #
 #	rotation_axis_angle : Axis angle rotation expressed as {x,y,z,angle} if rotation_mode is 'AXIS_ANGLE'
 #
@@ -102,13 +102,19 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #       num_samples            : Number of fcurve samples in action
 #
-#       num_fcurves            : Number of fcurves
+#       total_num_fcurves      : Total number of fcurves
 #
 #	samples_array_offset   : FCurve samples (blob)
 #
 #		float samples[num_samples][num_fcurves];
 #
-#	{fcurve, fcurve, ...}  : Function curves
+#	{fcurve_group, ...}  : Function curves
+#
+# fcurve_group:
+#
+#	path        : Path to property controlled by the curves in this group
+#
+#	num_fcurves : Number of fcurves in this group
 #
 # fcurve table:
 #
@@ -188,9 +194,17 @@ def write_action(write, blob_file, action):
 	write("\t\tframe_end=%d,\n" % frame_end)
 	write("\t\tstep=1.0,\n")
 	write("\t\tblob_offset=%d,\n" % blob_file.tell())
-	write("\t\tnum_fcurves=%d,\n" % len(action.fcurves))
+	write("\t\ttotal_num_fcurves=%d,\n" % len(action.fcurves))
+	path = ""
+	num_elem = 0
 	for fcurve in action.fcurves:
-		write("\t\t{path=%s,array_index=%d},\n" % (lua_string(fcurve.data_path), fcurve.array_index))
+		if fcurve.data_path != path:
+			if num_elem != 0:
+				write("\t\t{path=%s,num_fcurves=%d},\n" % (lua_string(path), num_elem))
+			path = fcurve.data_path
+			num_elem = 1
+		else:
+			num_elem = num_elem + 1
 
 	samples_array = array.array('f')
 	frame = frame_start
@@ -316,7 +330,7 @@ def write_object(write, blob_file, obj):
 	write("\t\tscale = %s,\n" % lua_vec3(obj.scale))
 	write("\t\trotation_mode = %s,\n" % lua_string(obj.rotation_mode))
 	if obj.rotation_mode == 'QUATERNION':
-		quaternion_tuple = (obj.quaternion.x, obj.quaternion.y, obj.quaternion.z, obj.quaternion.w)
+		quaternion_tuple = (obj.quaternion[0], obj.quaternion[1], obj.quaternion[2], obj.quaternion[3])
 		write("\t\trotation_quaternion = %s,\n" % quaternion_tuple)
 	elif obj.rotation_mode == 'AXIS_ANGLE':
 		write("\t\taxis_angle = %s,\n" % lus_array4f(obj.rotation_axis_angle))
