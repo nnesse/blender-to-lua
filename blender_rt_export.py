@@ -20,11 +20,35 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # root table:
 #
+#	objects = {[object_name] = object, ...}
+#
 # 	meshes = {[mesh_name] = mesh, ...}
 #
 # 	actions = {[action_name] = action, ...}
 #
 #	armatures = {[armature_name] = armature, ...}
+#
+# object table:
+#
+#	location            : location of object
+#
+#	scale               : scale of object
+#
+#	rotation_mode       : One of 'QUATERNION','AXIS_ANGLE', 'XYZ','XZY','YXZ',...,
+#
+#	rotation_euler      : Euler rotation values if rotation_mode is 'XYZ' or some permulation thereof
+#
+#	rotation_quaternion : Quaternion expressed as {x,y,z,w} if rotation_mode is 'QUATERNION'
+#
+#	rotation_axis_angle : Axis angle rotation expressed as {x,y,z,angle} if rotation_mode is 'AXIS_ANGLE'
+#
+#	type                : Type of data this object refers to. One of ‘MESH’, ‘CURVE’, ‘SURFACE’, ‘META’,
+#	                      ‘FONT’, ‘ARMATURE’, ‘LATTICE’, ‘EMPTY’, ‘CAMERA’, ‘LAMP’, ‘SPEAKER’
+#
+#	data                : Name of data this object refers to. Data will be found in it's corresponding
+#	                      type specific table inside the root table.
+#
+#	vertex_groups = {group_name, group_name, ... } : Names of the vertex groups for this object.
 #
 # mesh table:
 #
@@ -136,6 +160,7 @@ def mesh_triangulate(me):
 	bmesh.ops.triangulate(bm, faces=bm.faces)
 	bm.to_mesh(me)
 	bm.free()
+	return
 
 def lua_string(s):
 	return "'%s'" % s.replace("'","\\'")
@@ -147,7 +172,13 @@ def lua_vec4(v):
 	return "{%f,%f,%f,%f}" % v.to_tuple()
 
 def lua_mat4(m):
-	return "{%s, %s, %s, %s}" % tuple(lua_vec4(m[i]) for i in range(4))
+	return "{%s,%s,%s,%s}" % tuple(lua_vec4(m[i]) for i in range(4))
+
+def lua_array3f(a):
+	return "{%f,%f,%f}" % (a[0],a[1],a[2])
+
+def lua_array4f(a):
+	return "{%f,%f,%f,%f}" % (a[0],a[1],a[2],a[3])
 
 def write_action(write, blob_file, action):
 	write("\t[%s]={\n" % lua_string(action.name))
@@ -173,7 +204,8 @@ def write_action(write, blob_file, action):
 	write("\t\tnum_samples=%d\n" % num_samples)
 	write("\t},\n")
 
-def write_mesh(write, blob_file, name, mesh, obj):
+def write_mesh(write, blob_file, name, mesh):
+	mesh = mesh.copy() #Make a copy of the mesh so we can alter it
 	mesh_triangulate(mesh)
 	mesh.calc_normals_split()
 	smooth_groups, num_groups = mesh.calc_smooth_groups()
@@ -227,7 +259,7 @@ def write_mesh(write, blob_file, name, mesh, obj):
 	for uv_layer in mesh.uv_layers:
 		write("%s," % lua_string(uv_layer.name))
 	write("},\n");
-	write("\t\tnum_vertex_weights = %d\n" %  len(weight_array))
+	write("\t\tnum_vertex_weights = %d,\n" %  len(weight_array))
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		for loop_index in polygon.loop_indices:
@@ -248,6 +280,7 @@ def write_mesh(write, blob_file, name, mesh, obj):
 	write("\t\tgroup_index_array_offset = %d,\n" % blob_file.tell())
 	group_index_array.tofile(blob_file)
 	write("\t},\n");
+	bpy.data.meshes.remove(mesh)
 	return
 
 def write_bone(write, blob_file, bone):
@@ -261,12 +294,43 @@ def write_bone(write, blob_file, bone):
 
 def write_armature(write, blob_file, armature):
 	write("\t[%s] = {\n" % lua_string(armature.name))
-	write("\t\tbones = {")
+	write("\t\tbones = {\n")
 	for bone in armature.bones:
 		write_bone(write, blob_file, bone)
 	write("\t\t}")
 	write("\t}\n")
 	return
+
+def write_object(write, blob_file, obj):
+	write("\t[%s] = {\n" % lua_string(obj.name))
+	if obj.parent:
+		write("\t\tparent = %s,\n" % lua_string(obj.parent.name))
+		write("\t\tparent_type = %s,\n" % lua_string(obj.parent_type))
+		if obj.parent_type == 'BONE':
+			write("\t\tparent_bone = %s,\n" % lua_string(obj.parent_type))
+		elif obj.parent_type == 'VERTEX':
+			write("\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
+		elif obj.parent_type == 'VERTEX_3':
+			write("\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
+	write("\t\tlocation = %s,\n" % lua_vec3(obj.location))
+	write("\t\tscale = %s,\n" % lua_vec3(obj.scale))
+	write("\t\trotation_mode = %s,\n" % lua_string(obj.rotation_mode))
+	if obj.rotation_mode == 'QUATERNION':
+		quaternion_tuple = (obj.quaternion.x, obj.quaternion.y, obj.quaternion.z, obj.quaternion.w)
+		write("\t\trotation_quaternion = %s,\n" % quaternion_tuple)
+	elif obj.rotation_mode == 'AXIS_ANGLE':
+		write("\t\taxis_angle = %s,\n" % lus_array4f(obj.rotation_axis_angle))
+	else:
+		write("\t\trotation_euler = %s,\n" % lua_array3f(obj.rotation_euler))
+	write("\t\ttype = %s,\n" % lua_string(obj.type))
+	if obj.data:
+		write("\t\tdata = %s,\n" % lua_string(obj.data.name))
+	write("\t\tvertex_groups = {\n")
+	for group in obj.vertex_groups:
+		write("\t\t\t%s,\n" % lua_string(group.name))
+	write("\t\t},\n")
+
+	write("\t},\n")
 
 def save_brt(operator, context, filepath=""):
 	lua_file = open(filepath + ".lua", "wt")
@@ -280,22 +344,22 @@ def save_brt(operator, context, filepath=""):
 	#Write blend data as LUA script
 	write_lua("return {\n")
 
+	write_lua("objects={\n")
+	for obj in context.blend_data.objects:
+		write_object(write_lua, blob_file, obj)
+	write_lua("},\n")
+
 	write_lua("meshes={\n")
 	arrays = []
-	for x in context.scene.objects:
-		try:
-			mesh = x.to_mesh(context.scene, False, 'PREVIEW', False)
-		except RuntimeError:
-			mesh = None
-		if mesh is None:
-			continue
-		write_mesh(write_lua, blob_file, x.name, mesh, x)
-		bpy.data.meshes.remove(mesh)
+	for mesh in context.blend_data.meshes:
+		write_mesh(write_lua, blob_file, mesh.name, mesh)
 	write_lua("},\n")
+
 	write_lua("actions={\n")
 	for action in context.blend_data.actions:
 		write_action(write_lua, blob_file, action)
 	write_lua("},\n")
+
 	write_lua("armatures={\n")
 	for armature in context.blend_data.armatures:
 		write_armature(write_lua, blob_file, armature)

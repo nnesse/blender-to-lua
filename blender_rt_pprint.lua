@@ -1,7 +1,11 @@
 temp = loadfile("pprint.lua")
 pprint = temp()
 
-temp = loadfile(arg[1])
+temp, err = loadfile(arg[1])
+if temp == nil then
+	print(err)
+	return
+end
 blend = temp()
 
 out = pprint(blend)
