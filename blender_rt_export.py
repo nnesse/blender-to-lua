@@ -18,29 +18,27 @@ from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
 #
-# root table:
+# table:
 #
-#	objects = {[object_name] = object, ...}
+#	scene     : scene_table
 #
-# 	meshes = {[mesh_name] = mesh, ...}
+# 	meshes    : {[mesh_name] = mesh, ...}
 #
-# 	actions = {[action_name] = action, ...}
+# 	actions   : {[action_name] = action, ...}
 #
-#	armatures = {[armature_name] = armature, ...}
+#	armatures : {[armature_name] = armature, ...}
+#
+# scene table
+#
+#	frame_start : first frame of animation
+#
+#	frame_end   : last frame of animation
+#
+#	frame_step  : Number of frames per "step"
+#
+#	object_table, object_table, ...
 #
 # object table:
-#
-#	location            : location of object
-#
-#	scale               : scale of object
-#
-#	rotation_mode       : One of 'QUATERNION','AXIS_ANGLE', 'XYZ','XZY','YXZ',...,
-#
-#	rotation_euler      : Euler rotation values if rotation_mode is 'XYZ' or some permulation thereof
-#
-#	rotation_quaternion : Quaternion expressed as {w,x,y,z} if rotation_mode is 'QUATERNION'
-#
-#	rotation_axis_angle : Axis angle rotation expressed as {x,y,z,angle} if rotation_mode is 'AXIS_ANGLE'
 #
 #	type                : Type of data this object refers to. One of ‘MESH’, ‘CURVE’, ‘SURFACE’, ‘META’,
 #	                      ‘FONT’, ‘ARMATURE’, ‘LATTICE’, ‘EMPTY’, ‘CAMERA’, ‘LAMP’, ‘SPEAKER’
@@ -50,13 +48,43 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	vertex_groups = {group_name, group_name, ... } : Names of the vertex groups for this object.
 #
+#	bone_names = {bone_name, bone_name, ... }      : Name of the bones for pose data
+#
+#	animated = true | false                        : 'true' if this object has an animation block i.e. there may be per frame pose
+#	                                                 and object transform data
+#
+#	transform_array_offset                         : Array of transforms including the object local transform and pose bone transforms
+#	                                                 Transforms are stored in column major order.
+#
+#		float transform_array[animated ? <frame steps in scene> : 1][1 + #bone_names][16]
+#
+#	nla_tracks = {nla_track, nla_track, ...}       : Array of NLA tracks in bottom up order
+#
+# NLA track table:
+#
+#	name   : Name of NLA track
+#
+#	nla_strip, nla_strip, ...
+#
+# NLA strip table:
+#
+#	name               : Name of NLA strip
+#
+#	action             : Name of action referenced by this strip
+#
+#	frame_start        : First frame of strip
+#
+#	frame_end          : Last frame of strip
+#
+#	action_frame_start : First frame referenced from action
+#
+#	action_frame_end   : Last frame referenced from action
+#
 # mesh table:
 #
 #	num_triangles                 : Number of triangles in mesh
 #
 #	num_vertices                  : Number of verticies in mesh
-#
-#	normals                       : true if normals are stored in the mesh data
 #
 #	num_uv_layers                 : Number of uv layers stored in mesh data
 #
@@ -78,7 +106,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	uv_array_offset               : UV coordinate arrays (blob)
 #
-#		float uv[num_verticies][num_uv_layers][2];
+#		float uv[num_verticies][#uv_layers][2];
 #
 #	weight_count_array_offset     : Number of weights in for each vertex (blob)
 #
@@ -102,13 +130,15 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #       num_samples            : Number of fcurve samples in action
 #
+#	id_root                : Data type this action should be applied to ('MESH', 'OBJECT', etc)
+#
 #       total_num_fcurves      : Total number of fcurves
 #
-#	samples_array_offset   : FCurve samples (blob)
+#	fcurve_array_offset    : FCurve samples (blob)
 #
 #		float samples[num_samples][num_fcurves];
 #
-#	{fcurve_group, ...}  : Function curves
+#	fcurve_group, fcurve_group, ... : Function curve groups
 #
 # fcurve_group:
 #
@@ -186,14 +216,26 @@ def lua_array3f(a):
 def lua_array4f(a):
 	return "{%f,%f,%f,%f}" % (a[0],a[1],a[2],a[3])
 
+#def write_transform(write, indent, obj):
+#	write("%slocation = %s,\n" % (indent, lua_vec3(obj.location)))
+#	write("%sscale = %s,\n" % (indent, lua_vec3(obj.scale)))
+#	write("%srotation_mode = %s,\n" % (indent, lua_string(obj.rotation_mode)))
+#	if obj.rotation_mode == 'QUATERNION':
+#		write("%srotation_quaternion = %s,\n" % (indent, lua_array4f(obj.rotation_quaternion)))
+#	elif obj.rotation_mode == 'AXIS_ANGLE':
+#		write("%srotation_axis_angle = %s,\n" % (indent, lua_array4f(obj.rotation_axis_angle)))
+#	else:
+#		write("%srotation_euler = %s,\n" % (indent, lua_array3f(obj.rotation_euler)))
+
 def write_action(write, blob_file, action):
 	write("\t[%s]={\n" % lua_string(action.name))
 	frame_start = action.frame_range[0]
 	frame_end = action.frame_range[1]
 	write("\t\tframe_start=%d,\n" % frame_start)
 	write("\t\tframe_end=%d,\n" % frame_end)
+	write("\t\tid_root=%s,\n" % lua_string(action.id_root))
 	write("\t\tstep=1.0,\n")
-	write("\t\tblob_offset=%d,\n" % blob_file.tell())
+	write("\t\tfcurve_array_offset=%d,\n" % blob_file.tell())
 	write("\t\ttotal_num_fcurves=%d,\n" % len(action.fcurves))
 	path = ""
 	num_elem = 0
@@ -205,16 +247,18 @@ def write_action(write, blob_file, action):
 			num_elem = 1
 		else:
 			num_elem = num_elem + 1
+	if path != "" and num_elem != 0:
+		write("\t\t{path=%s,num_fcurves=%d},\n" % (lua_string(path), num_elem))
 
-	samples_array = array.array('f')
+	fcurve_array = array.array('f')
 	frame = frame_start
 	num_samples = 0
 	while frame <= frame_end:
 		for fcurve in action.fcurves:
-			samples_array.append(fcurve.evaluate(frame))
+			fcurve_array.append(fcurve.evaluate(frame))
 		frame += 1.0
 		num_samples = num_samples + 1
-	samples_array.tofile(blob_file)
+	fcurve_array.tofile(blob_file)
 	write("\t\tnum_samples=%d\n" % num_samples)
 	write("\t},\n")
 
@@ -268,7 +312,6 @@ def write_mesh(write, blob_file, name, mesh):
 	write("\t['%s'] = {\n" % name)
 	write("\t\tnum_triangles = %d,\n" % len(mesh.polygons))
 	write("\t\tnum_verticies = %d,\n" % vertex_count)
-	write("\t\tnum_uv_layers = %d,\n" % len(mesh.uv_layers))
 	write("\t\tuv_layers = {")
 	for uv_layer in mesh.uv_layers:
 		write("%s," % lua_string(uv_layer.name))
@@ -311,11 +354,16 @@ def write_armature(write, blob_file, armature):
 	write("\t\tbones = {\n")
 	for bone in armature.bones:
 		write_bone(write, blob_file, bone)
-	write("\t\t}")
+	write("\t\t}\n")
 	write("\t}\n")
 	return
 
-def write_object(write, blob_file, obj):
+def flatten_4x4mat(dest, src):
+	for i in range(4):
+		for j in range(4):
+			dest.append(src[i][j])
+
+def write_object(scene, write, blob_file, obj):
 	write("\t[%s] = {\n" % lua_string(obj.name))
 	if obj.parent:
 		write("\t\tparent = %s,\n" % lua_string(obj.parent.name))
@@ -326,25 +374,69 @@ def write_object(write, blob_file, obj):
 			write("\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
 		elif obj.parent_type == 'VERTEX_3':
 			write("\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
-	write("\t\tlocation = %s,\n" % lua_vec3(obj.location))
-	write("\t\tscale = %s,\n" % lua_vec3(obj.scale))
-	write("\t\trotation_mode = %s,\n" % lua_string(obj.rotation_mode))
-	if obj.rotation_mode == 'QUATERNION':
-		quaternion_tuple = (obj.quaternion[0], obj.quaternion[1], obj.quaternion[2], obj.quaternion[3])
-		write("\t\trotation_quaternion = %s,\n" % quaternion_tuple)
-	elif obj.rotation_mode == 'AXIS_ANGLE':
-		write("\t\taxis_angle = %s,\n" % lus_array4f(obj.rotation_axis_angle))
-	else:
-		write("\t\trotation_euler = %s,\n" % lua_array3f(obj.rotation_euler))
 	write("\t\ttype = %s,\n" % lua_string(obj.type))
 	if obj.data:
 		write("\t\tdata = %s,\n" % lua_string(obj.data.name))
-	write("\t\tvertex_groups = {\n")
-	for group in obj.vertex_groups:
-		write("\t\t\t%s,\n" % lua_string(group.name))
-	write("\t\t},\n")
 
+	if len(obj.vertex_groups) > 0:
+		write("\t\tvertex_groups = {\n")
+		for group in obj.vertex_groups:
+			write("\t\t\t%s,\n" % lua_string(group.name))
+		write("\t\t},\n")
+
+	transform_array = array.array('f') #Vertex coordinates
+	write("\t\ttransform_array_offset = %d,\n" % blob_file.tell())
+
+	def write_object_frame():
+		flatten_4x4mat(transform_array, obj.matrix_local)
+		if obj.pose:
+			for pbone in obj.pose.bones:
+				flatten_4x4mat(transform_array, pbone.matrix)
+
+	if obj.pose is not None:
+		write("\t\tbone_names = {\n")
+		for pbone in obj.pose.bones:
+			write("\t\t\t%s,\n" % lua_string(pbone.bone.name))
+		write("\t\t},\n")
+
+	if obj.animation_data is not None:
+		write("\t\tanimated = true,\n")
+		write_object_frame()
+
+		def write_nla_strip(strip):
+			if strip.mute is True:
+				return
+			write("\t\t\t\t{\n")
+			write("\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
+			write("\t\t\t\t\taction = %s,\n" % lua_string(strip.action.name))
+			write("\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
+			write("\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
+			write("\t\t\t\t\taction_frame_start = %d,\n" % strip.action_frame_start)
+			write("\t\t\t\t\taction_frame_end = %d,\n" % strip.action_frame_end)
+			write("\t\t\t\t},\n")
+
+		def write_nla_track(track):
+			if track.mute is True:
+				return
+			write("\t\t\t{\n")
+			write("\t\t\t\tname = %s,\n" % lua_string(track.name))
+			for strip in track.strips:
+				write_nla_strip(strip)
+			write("\t\t\t},\n")
+
+		write("\t\tnla_tracks = {\n")
+		for track in obj.animation_data.nla_tracks:
+			write_nla_track(track)
+		write("\t\t},\n")
+	else:
+		write("\t\tanimated = false,\n")
+		frame = scene.frame_start
+		while frame < scene.frame_end:
+			scene.frame_set(frame)
+			write_object_frame()
+			frame = frame + scene.frame_step
 	write("\t},\n")
+	transform_array.tofile(blob_file)
 
 def save_brt(operator, context, filepath=""):
 	lua_file = open(filepath + ".lua", "wt")
@@ -358,9 +450,14 @@ def save_brt(operator, context, filepath=""):
 	#Write blend data as LUA script
 	write_lua("return {\n")
 
-	write_lua("objects={\n")
-	for obj in context.blend_data.objects:
-		write_object(write_lua, blob_file, obj)
+	scene = context.scene
+
+	write_lua("scene = {\n")
+	write_lua("\tframe_start = %f,\n" % scene.frame_start)
+	write_lua("\tframe_end= %f,\n" % scene.frame_end)
+	write_lua("\tframe_step = %f,\n" % scene.frame_step)
+	for obj in scene.objects:
+		write_object(context.scene, write_lua, blob_file, obj)
 	write_lua("},\n")
 
 	write_lua("meshes={\n")
