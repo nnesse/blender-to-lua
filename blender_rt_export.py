@@ -53,10 +53,14 @@ from bpy_extras.io_utils import (ExportHelper)
 #	animated = true | false                        : 'true' if this object has an animation block i.e. there may be per frame pose
 #	                                                 and object transform data
 #
-#	transform_array_offset                         : Array of transforms including the object local transform and pose bone transforms
-#	                                                 Transforms are stored in column major order.
+#	transform_array_offset                         : Array of transforms including object local transforms and pose bone transforms
+#	                                                 Transforms are stored as 4x4 column major order matricies. Pose bone transforms
+#                                                        are in object local space. (blob)
 #
 #		float transform_array[animated ? <frame steps in scene> : 1][1 + #bone_names][16]
+#
+#		Object transforms are stored at 'transform[frame_step][0]' and pose bone transforms are
+#		stored in transform[frame_step][i] where i one based index into 'bone_names'
 #
 #	nla_tracks = {nla_track, nla_track, ...}       : Array of NLA tracks in bottom up order
 #
@@ -154,13 +158,21 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # armature table:
 #
-#	bones = {['bone_name'] = {bone}, ...}
+#	tail_array_offset      : Array of bone tail positions in object local (blob)
+#
+#		float tail_array[#armature][3]
+#
+#	transform_array_offset : Array of bone transforms in object local space. Stored as 4x4 column
+#	                         major order matricies. Position (0,0,0) in bone space is the location
+#	                         of the head of the bone (blob)
+#
+#		float transform_array[#armature][16]
+#
+#	bone, bone, ...
 #
 # bone table:
 #
-#	tail   : location of tail of bone in object space (vec3)
-#
-#	matrix : Bone to object space transform
+#	name   : Name of the bone
 #
 #	parent : Name of parent bone or nil of the bone has no parent
 #
@@ -340,21 +352,28 @@ def write_mesh(write, blob_file, name, mesh):
 	bpy.data.meshes.remove(mesh)
 	return
 
-def write_bone(write, blob_file, bone):
-	write("\t\t\t[%s] = {\n" % lua_string(bone.name))
-	write("\t\t\t\ttail=%s,\n" % lua_vec3(bone.tail_local))
-	write("\t\t\t\tmatrix=%s,\n" % lua_mat4(bone.matrix_local))
-	if bone.parent:
-		write("\t\t\t\tparent=%s,\n" % lua_string(bone.parent.name))
-	write("\t\t\t},\n")
-	return
-
 def write_armature(write, blob_file, armature):
+	tail_array = array.array('f')
+	transform_array = array.array('f')
+	def write_bone(write, blob_file, bone):
+		write("\t\t{\n")
+		write("\t\t\tname = %s,\n" % lua_string(bone.name))
+		if bone.parent:
+			write("\t\t\tparent=%s,\n" % lua_string(bone.parent.name))
+		flatten_4x4mat(transform_array, bone.matrix_local)
+		tail_array.append(bone.tail_local[0])
+		tail_array.append(bone.tail_local[1])
+		tail_array.append(bone.tail_local[2])
+		write("\t\t},\n")
+		return
+
 	write("\t[%s] = {\n" % lua_string(armature.name))
-	write("\t\tbones = {\n")
 	for bone in armature.bones:
 		write_bone(write, blob_file, bone)
-	write("\t\t}\n")
+	write("\t\ttail_array_offset = %d,\n" % blob_file.tell())
+	tail_array.tofile(blob_file)
+	write("\t\ttransform_array_offset = %d,\n" % blob_file.tell())
+	transform_array.tofile(blob_file)
 	write("\t}\n")
 	return
 
