@@ -90,8 +90,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	num_vertices                  : Number of verticies in mesh
 #
-#	num_uv_layers                 : Number of uv layers stored in mesh data
-#
 #	uv_layers = {layer_name, ...} : Names of UV layers
 #
 #	num_vertex_weights            : Total number of vertex weights stored in mesh data
@@ -458,8 +456,8 @@ def write_object(scene, write, blob_file, obj):
 	transform_array.tofile(blob_file)
 
 def save_brt(operator, context, filepath=""):
-	lua_file = open(filepath + ".lua", "wt")
-	blob_file = open(filepath + ".blob", "wb")
+	lua_file = open(filepath, "wt")
+	blob_file = open(filepath + ".bin", "wb")
 
 	def write_lua(s):
 		lua_file.write(s)
