@@ -447,11 +447,8 @@ def write_object(scene, write, blob_file, obj):
 		write("\t\t},\n")
 	else:
 		write("\t\tanimated = false,\n")
-		frame = scene.frame_start
-		while frame < scene.frame_end:
-			scene.frame_set(frame)
-			write_object_frame()
-			frame = frame + scene.frame_step
+		scene.frame_set(scene.frame_start)
+		write_object_frame()
 	write("\t},\n")
 	transform_array.tofile(blob_file)
 
