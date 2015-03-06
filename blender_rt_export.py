@@ -1,13 +1,13 @@
 bl_info = {
 	"name": "Blend RT",
-	"author": "Neils Nesse",
+	"author": "Niels Nesse",
 	"blender": (2, 69, 0),
 	"location": "File > Import-Export",
 	"description": "Write blend data to a LUA script + a binary blob",
 	"warning": "",
 	"wiki_url": "",
 	"tracker_url": "",
-	"support": 'TESTING',
+	"support": 'COMMUNITY',
 	"category": "Import-Export"}
 
 import bpy
@@ -18,17 +18,29 @@ from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
 #
-# table:
+# A BRT file is a LUA fragment that returns a table containing the a files scene graph,
+# associated metadata, and references to numerical store in a separate binary file
+# describing verticies, mesh and animation data. Each section below describes the
+# structure of a type of LUA table contained in the  BRT LUA file. Identifiers named
+# "X_table" refer to instances of type X. Identifiers ending in "_name" are strings.
+# Field names ending in "_offset" are byte offsets into the LUA files associated binary
+# blob. These feilds are documented with a description of the structure of the data
+# stored at that offset in terms of C data types and fields in the parent table. The end
+# of each table type description may be a line with the format "Y, Y, ...". This
+# indicates that the table also contains a sequence of values of type 'Y' in addition
+# to any named values.
+#
+# root_table:
 #
 #	scene     : scene_table
 #
-# 	meshes    : {[mesh_name] = mesh, ...}
+# 	meshes    : {[mesh_name] = mesh_table, ...}
 #
-# 	actions   : {[action_name] = action, ...}
+# 	actions   : {[action_name] = action_table, ...}
 #
-#	armatures : {[armature_name] = armature, ...}
+#	armatures : {[armature_name] = armature_table, ...}
 #
-# scene table
+# scene_table:
 #
 #	frame_start : first frame of animation
 #
@@ -36,12 +48,12 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	frame_step  : Number of frames per "step"
 #
-#	object_table, object_table, ...
+#	objects     : { [object_name] = object_table, ... }
 #
-# object table:
+# object_table:
 #
-#	type                : Type of data this object refers to. One of ‘MESH’, ‘CURVE’, ‘SURFACE’, ‘META’,
-#	                      ‘FONT’, ‘ARMATURE’, ‘LATTICE’, ‘EMPTY’, ‘CAMERA’, ‘LAMP’, ‘SPEAKER’
+#	type                : Type of data this object refers to. One of 'MESH', 'CURVE', 'SURFACE', 'META',
+#	                      'FONT', 'ARMATURE', 'LATTICE', 'EMPTY', 'CAMERA', 'LAMP', 'SPEAKER'
 #
 #	data                : Name of data this object refers to. Data will be found in it's corresponding
 #	                      type specific table inside the root table.
@@ -62,15 +74,15 @@ from bpy_extras.io_utils import (ExportHelper)
 #		Object transforms are stored at 'transform[frame_step][0]' and pose bone transforms are
 #		stored in transform[frame_step][i] where i one based index into 'bone_names'
 #
-#	nla_tracks = {nla_track, nla_track, ...}       : Array of NLA tracks in bottom up order
+#	nla_tracks = {nla_track_table, nla_track_table, ...}       : Array of NLA tracks in bottom up order
 #
-# NLA track table:
+# nla_track_table:
 #
 #	name   : Name of NLA track
 #
-#	nla_strip, nla_strip, ...
+#	nla_strip_table, nla_strip_table, ...
 #
-# NLA strip table:
+# nls_strip_table:
 #
 #	name               : Name of NLA strip
 #
@@ -84,7 +96,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	action_frame_end   : Last frame referenced from action
 #
-# mesh table:
+# mesh_table:
 #
 #	num_triangles                 : Number of triangles in mesh
 #
@@ -110,19 +122,19 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		float uv[num_verticies][#uv_layers][2];
 #
-#	weight_count_array_offset     : Number of weights in for each vertex (blob)
+#	weight_count_array_offset     : Number of weights for each vertex (blob)
 #
 #		uint8_t weight_count_array[num_verticies];
 #
 #	weight_array_offset           : Vertex weights for all verticies concatenated in order (blob)
 #
-# 		uint16_t weight_array[num_vertex_weights]; //15 bit unsigned fixed point weights (i.e. 2.0f max)
+# 		uint16_t weight_array[num_vertex_weights]; //15 bit unsigned fixed point weights (i.e. 2^16 == 2.0f)
 #
 #	group_index_array_offset      : Group indicies for vertex weight's
 #
 #		uint16_t group_index_array[num_vertex_weights]; //Indicies into vertex group array
 #
-# action table:
+# action_table:
 #
 #	frame_start            : First frame of action
 #
@@ -134,45 +146,45 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	id_root                : Data type this action should be applied to ('MESH', 'OBJECT', etc)
 #
-#       total_num_fcurves      : Total number of fcurves
+#       total_num_fcurves      : Total number of fcurves. Sum of 'num_fcurves' over all fcurve_groups
 #
 #	fcurve_array_offset    : FCurve samples (blob)
 #
-#		float samples[num_samples][num_fcurves];
+#		float samples[num_samples][total_num_fcurves];
 #
-#	fcurve_group, fcurve_group, ... : Function curve groups
+#	fcurve_group_table, fcurve_group_table, ... : Function curve groups
 #
-# fcurve_group:
+# fcurve_group_table:
 #
 #	path        : Path to property controlled by the curves in this group
 #
 #	num_fcurves : Number of fcurves in this group
 #
-# fcurve table:
+# fcurve_table:
 #
 #	path                   : Path of property controlled by the curve
 #
 #	array_index            : Array index within property (for vector/matrix types)
 #
-# armature table:
+# armature_table:
 #
 #	tail_array_offset      : Array of bone tail positions in object local (blob)
 #
-#		float tail_array[#armature][3]
+#		float tail_array[#armature_table][3]
 #
 #	transform_array_offset : Array of bone transforms in object local space. Stored as 4x4 column
 #	                         major order matricies. Position (0,0,0) in bone space is the location
 #	                         of the head of the bone (blob)
 #
-#		float transform_array[#armature][16]
+#		float transform_array[#armature_table][16]
 #
-#	bone, bone, ...
+#	bone_table, bone_table, ...
 #
-# bone table:
+# bone_table:
 #
 #	name   : Name of the bone
 #
-#	parent : Name of parent bone or nil of the bone has no parent
+#	parent : Name of parent bone or nil if the bone has no parent
 #
 
 class export_BRT(bpy.types.Operator, ExportHelper):
@@ -225,17 +237,6 @@ def lua_array3f(a):
 
 def lua_array4f(a):
 	return "{%f,%f,%f,%f}" % (a[0],a[1],a[2],a[3])
-
-#def write_transform(write, indent, obj):
-#	write("%slocation = %s,\n" % (indent, lua_vec3(obj.location)))
-#	write("%sscale = %s,\n" % (indent, lua_vec3(obj.scale)))
-#	write("%srotation_mode = %s,\n" % (indent, lua_string(obj.rotation_mode)))
-#	if obj.rotation_mode == 'QUATERNION':
-#		write("%srotation_quaternion = %s,\n" % (indent, lua_array4f(obj.rotation_quaternion)))
-#	elif obj.rotation_mode == 'AXIS_ANGLE':
-#		write("%srotation_axis_angle = %s,\n" % (indent, lua_array4f(obj.rotation_axis_angle)))
-#	else:
-#		write("%srotation_euler = %s,\n" % (indent, lua_array3f(obj.rotation_euler)))
 
 def write_action(write, blob_file, action):
 	write("\t[%s]={\n" % lua_string(action.name))
@@ -381,28 +382,28 @@ def flatten_4x4mat(dest, src):
 			dest.append(src[i][j])
 
 def write_object(scene, write, blob_file, obj):
-	write("\t[%s] = {\n" % lua_string(obj.name))
+	write("\t\t[%s] = {\n" % lua_string(obj.name))
 	if obj.parent:
-		write("\t\tparent = %s,\n" % lua_string(obj.parent.name))
-		write("\t\tparent_type = %s,\n" % lua_string(obj.parent_type))
+		write("\t\t\tparent = %s,\n" % lua_string(obj.parent.name))
+		write("\t\t\tparent_type = %s,\n" % lua_string(obj.parent_type))
 		if obj.parent_type == 'BONE':
-			write("\t\tparent_bone = %s,\n" % lua_string(obj.parent_type))
+			write("\t\t\tparent_bone = %s,\n" % lua_string(obj.parent_type))
 		elif obj.parent_type == 'VERTEX':
-			write("\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
+			write("\t\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
 		elif obj.parent_type == 'VERTEX_3':
-			write("\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
-	write("\t\ttype = %s,\n" % lua_string(obj.type))
+			write("\t\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
+	write("\t\t\ttype = %s,\n" % lua_string(obj.type))
 	if obj.data:
-		write("\t\tdata = %s,\n" % lua_string(obj.data.name))
+		write("\t\t\tdata = %s,\n" % lua_string(obj.data.name))
 
 	if len(obj.vertex_groups) > 0:
-		write("\t\tvertex_groups = {\n")
+		write("\t\t\tvertex_groups = {\n")
 		for group in obj.vertex_groups:
-			write("\t\t\t%s,\n" % lua_string(group.name))
-		write("\t\t},\n")
+			write("\t\t\t\t%s,\n" % lua_string(group.name))
+		write("\t\t\t},\n")
 
 	transform_array = array.array('f') #Vertex coordinates
-	write("\t\ttransform_array_offset = %d,\n" % blob_file.tell())
+	write("\t\t\ttransform_array_offset = %d,\n" % blob_file.tell())
 
 	def write_object_frame():
 		flatten_4x4mat(transform_array, obj.matrix_local)
@@ -411,45 +412,45 @@ def write_object(scene, write, blob_file, obj):
 				flatten_4x4mat(transform_array, pbone.matrix)
 
 	if obj.pose is not None:
-		write("\t\tbone_names = {\n")
+		write("\t\t\tbone_names = {\n")
 		for pbone in obj.pose.bones:
-			write("\t\t\t%s,\n" % lua_string(pbone.bone.name))
-		write("\t\t},\n")
+			write("\t\t\t\t%s,\n" % lua_string(pbone.bone.name))
+		write("\t\t\t},\n")
 
 	if obj.animation_data is not None:
-		write("\t\tanimated = true,\n")
+		write("\t\t\tanimated = true,\n")
 		write_object_frame()
 
 		def write_nla_strip(strip):
 			if strip.mute is True:
 				return
-			write("\t\t\t\t{\n")
-			write("\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
-			write("\t\t\t\t\taction = %s,\n" % lua_string(strip.action.name))
-			write("\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
-			write("\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
-			write("\t\t\t\t\taction_frame_start = %d,\n" % strip.action_frame_start)
-			write("\t\t\t\t\taction_frame_end = %d,\n" % strip.action_frame_end)
-			write("\t\t\t\t},\n")
+			write("\t\t\t\t\t{\n")
+			write("\t\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
+			write("\t\t\t\t\t\taction = %s,\n" % lua_string(strip.action.name))
+			write("\t\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
+			write("\t\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
+			write("\t\t\t\t\t\taction_frame_start = %d,\n" % strip.action_frame_start)
+			write("\t\t\t\t\t\taction_frame_end = %d,\n" % strip.action_frame_end)
+			write("\t\t\t\t\t},\n")
 
 		def write_nla_track(track):
 			if track.mute is True:
 				return
-			write("\t\t\t{\n")
-			write("\t\t\t\tname = %s,\n" % lua_string(track.name))
+			write("\t\t\t\t{\n")
+			write("\t\t\t\t\tname = %s,\n" % lua_string(track.name))
 			for strip in track.strips:
 				write_nla_strip(strip)
-			write("\t\t\t},\n")
+			write("\t\t\t\t},\n")
 
-		write("\t\tnla_tracks = {\n")
+		write("\t\t\tnla_tracks = {\n")
 		for track in obj.animation_data.nla_tracks:
 			write_nla_track(track)
-		write("\t\t},\n")
+		write("\t\t\t},\n")
 	else:
-		write("\t\tanimated = false,\n")
+		write("\t\t\tanimated = false,\n")
 		scene.frame_set(scene.frame_start)
 		write_object_frame()
-	write("\t},\n")
+	write("\t\t},\n")
 	transform_array.tofile(blob_file)
 
 def save_brt(operator, context, filepath=""):
@@ -470,8 +471,10 @@ def save_brt(operator, context, filepath=""):
 	write_lua("\tframe_start = %f,\n" % scene.frame_start)
 	write_lua("\tframe_end= %f,\n" % scene.frame_end)
 	write_lua("\tframe_step = %f,\n" % scene.frame_step)
+	write_lua("\tobjects = {\n")
 	for obj in scene.objects:
 		write_object(context.scene, write_lua, blob_file, obj)
+	write_lua("\t}\n")
 	write_lua("},\n")
 
 	write_lua("meshes={\n")
