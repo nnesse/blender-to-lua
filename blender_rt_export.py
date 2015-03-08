@@ -18,17 +18,27 @@ from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
 #
-# A BRT file is a LUA fragment that returns a table containing the a files scene graph,
-# associated metadata, and references to numerical store in a separate binary file
-# describing verticies, mesh and animation data. Each section below describes the
-# structure of a type of LUA table contained in the  BRT LUA file. Identifiers named
-# "X_table" refer to instances of type X. Identifiers ending in "_name" are strings.
-# Field names ending in "_offset" are byte offsets into the LUA files associated binary
-# blob. These feilds are documented with a description of the structure of the data
-# stored at that offset in terms of C data types and fields in the parent table. The end
-# of each table type description may be a line with the format "Y, Y, ...". This
+# The BRT exporter generates a pair of files, A LUA fragment with the extension '.brt'
+# and a binary file with the extension '.brt.bin'. The LUA fragment returns the file's
+# scene graph and associated elements as a single LUA table which references
+# locations in the binary file. Only integers, strings, and boolean values are stored
+# in the LUA tables while matrix transforms and bulk vertex and animation data are
+# stored in the binary file
+#
+# Each section below describes the structure of a type of table in the LUA fragment
+# with the following convensions.
+#
+#  - Identifiers named "X_table" refer to instances of table type X.
+#
+#  - Identifiers ending in "_name" are strings.
+#
+#  - Field names ending in "_offset" are byte offsets into the binary file.
+#       The data's structure is described in terms of C data types and
+#	fields in the parent table.
+#
+# The end of some table type descriptions contain a line with the format "Y, Y, ...". This
 # indicates that the table also contains a sequence of values of type 'Y' in addition
-# to any named values.
+# to the specified named values.
 #
 # root_table:
 #
@@ -42,9 +52,9 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # scene_table:
 #
-#	frame_start : first frame of animation
+#	frame_start : First frame of animation
 #
-#	frame_end   : last frame of animation
+#	frame_end   : Last frame of animation
 #
 #	frame_step  : Number of frames per "step"
 #
@@ -58,23 +68,23 @@ from bpy_extras.io_utils import (ExportHelper)
 #	data                : Name of data this object refers to. Data will be found in it's corresponding
 #	                      type specific table inside the root table.
 #
-#	vertex_groups = {group_name, group_name, ... } : Names of the vertex groups for this object.
+#	vertex_groups	    : {group_name, group_name, ... } : Names of the vertex groups for this object.
 #
-#	bone_names = {bone_name, bone_name, ... }      : Name of the bones for pose data
+#	bone_names          : {bone_name, bone_name, ... }   : Name of the bones for pose data
 #
-#	animated = true | false                        : 'true' if this object has an animation block i.e. there may be per frame pose
-#	                                                 and object transform data
+#	animated            : true | false                   : 'true' if this object has an animation block i.e. there may be per frame pose
+#	                                                       and object transform data
 #
-#	transform_array_offset                         : Array of transforms including object local transforms and pose bone transforms
-#	                                                 Transforms are stored as 4x4 column major order matricies. Pose bone transforms
-#                                                        are in object local space. (blob)
+#	transform_array_offset                               : Array of transforms including object local transforms and pose bone transforms
+#	                                                       Transforms are stored as 4x4 column major order matricies. Pose bone transforms
+#                                                              are in object local space. (blob)
 #
 #		float transform_array[animated ? <frame steps in scene> : 1][1 + #bone_names][16]
 #
 #		Object transforms are stored at 'transform[frame_step][0]' and pose bone transforms are
 #		stored in transform[frame_step][i] where i one based index into 'bone_names'
 #
-#	nla_tracks = {nla_track_table, nla_track_table, ...}       : Array of NLA tracks in bottom up order
+#	nla_tracks          : {nla_track_table, nla_track_table, ...} : Array of NLA tracks in bottom up order
 #
 # nla_track_table:
 #
@@ -106,7 +116,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	num_vertex_weights            : Total number of vertex weights stored in mesh data
 #
-#	index_array_offset            : Vertex array indicies for mesh triangles (blob)
+#	index_array_offset            : Vertex array indicies for mesh triangles
 #
 #		uint16_t index_array[num_triangles][3]; //Indicies into vertex arrays
 #
@@ -126,7 +136,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		uint8_t weight_count_array[num_verticies];
 #
-#	weight_array_offset           : Vertex weights for all verticies concatenated in order (blob)
+#	weight_array_offset           : Vertex weights for all verticies concatenated in order
 #
 # 		uint16_t weight_array[num_vertex_weights]; //15 bit unsigned fixed point weights (i.e. 2^16 == 2.0f)
 #
@@ -146,7 +156,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	id_root                : Data type this action should be applied to ('MESH', 'OBJECT', etc)
 #
-#       total_num_fcurves      : Total number of fcurves. Sum of 'num_fcurves' over all fcurve_groups
+#       total_num_fcurves      : Total number of fcurves. This is the cum of 'num_fcurves' over all fcurve group's
 #
 #	fcurve_array_offset    : FCurve samples (blob)
 #
