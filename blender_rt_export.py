@@ -494,6 +494,12 @@ def write_object(scene, write, blob_file, obj):
 	if obj.animation_data is not None:
 		write("\t\t\tanimated = true,\n")
 		write_object_frame()
+		frame = scene.frame_start
+		scene.frame_set(frame)
+		while frame < scene.frame_end:
+			scene.frame_set(frame)
+			write_object_frame()
+			frame = frame + scene.frame_step
 
 		def write_nla_strip(strip):
 			if strip.mute is True:
