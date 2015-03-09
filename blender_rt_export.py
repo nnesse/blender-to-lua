@@ -18,183 +18,247 @@ from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
 #
-# The BRT exporter generates a pair of files, A LUA fragment with the extension '.brt'
+# The BRT exporter generates a pair of files, a LUA fragment with the extension '.brt'
 # and a binary file with the extension '.brt.bin'. The LUA fragment returns the file's
-# scene graph and associated elements as a single LUA table which references
-# locations in the binary file. Only integers, strings, and boolean values are stored
-# in the LUA tables while matrix transforms and bulk vertex and animation data are
-# stored in the binary file
+# scene graph as a single LUA table which references blocks of data in the binary file.
+# Only integers, strings, and boolean values are stored in the LUA tables while matrix
+# transforms and bulk vertex and animation data are stored in the binary file
 #
-# Each section below describes the structure of a type of table in the LUA fragment
-# with the following convensions.
+# Each section below describes the structure of a type of table returned by the LUA
+# fragment. Each table field is described with it's data type and the following
+# convensions are followed:
 #
 #  - Identifiers named "X_table" refer to instances of table type X.
 #
 #  - Identifiers ending in "_name" are strings.
 #
 #  - Field names ending in "_offset" are byte offsets into the binary file.
-#       The data's structure is described in terms of C data types and
-#	fields in the parent table.
+#	The field's type is described in terms of C data types and
+#	fields in the containing table.
 #
-# The end of some table type descriptions contain a line with the format "Y, Y, ...". This
-# indicates that the table also contains a sequence of values of type 'Y' in addition
-# to the specified named values.
+#  - The end of some table descriptions contain a line with the format "Y, Y, ...". This
+#	indicates that the table also contains a sequence of values of type 'Y' in addition
+#	to the specified named values.
 #
 # root_table:
 #
-#	scene     : scene_table
+#	scene : scene_table
 #
-# 	meshes    : {[mesh_name] = mesh_table, ...}
+# 	meshes : {[mesh_name] = mesh_table, ...}
 #
-# 	actions   : {[action_name] = action_table, ...}
+# 	actions : {[action_name] = action_table, ...}
 #
 #	armatures : {[armature_name] = armature_table, ...}
 #
 # scene_table:
 #
-#	frame_start : First frame of animation
+#	frame_start : integer
 #
-#	frame_end   : Last frame of animation
+#		First frame of animation
 #
-#	frame_step  : Number of frames per "step"
+#	frame_end : integer
 #
-#	objects     : { [object_name] = object_table, ... }
+#		Last frame of animation
+#
+#	frame_step : float
+#
+#		Number of frames per "step"
+#
+#	objects : { [object_name] = object_table, ... }
 #
 # object_table:
 #
-#	type                : Type of data this object refers to. One of 'MESH', 'CURVE', 'SURFACE', 'META',
-#	                      'FONT', 'ARMATURE', 'LATTICE', 'EMPTY', 'CAMERA', 'LAMP', 'SPEAKER'
+#	type : string
 #
-#	data                : Name of data this object refers to. Data will be found in it's corresponding
-#	                      type specific table inside the root table.
+#		Type of data this object refers to. One of 'MESH', 'CURVE', 'SURFACE', 'META',
+#	        'FONT', 'ARMATURE', 'LATTICE', 'EMPTY', 'CAMERA', 'LAMP', 'SPEAKER'
 #
-#	vertex_groups	    : {group_name, group_name, ... } : Names of the vertex groups for this object.
+#	data : string
 #
-#	bone_names          : {bone_name, bone_name, ... }   : Name of the bones for pose data
+#		Name of data this object refers to. Data will be found in it's corresponding
+#	        type specific table inside the root table.
 #
-#	animated            : true | false                   : 'true' if this object has an animation block i.e. there may be per frame pose
-#	                                                       and object transform data
+#	vertex_groups : {group_name, group_name, ... }
 #
-#	transform_array_offset                               : Array of transforms including object local transforms and pose bone transforms
-#	                                                       Transforms are stored as 4x4 column major order matricies. Pose bone transforms
-#                                                              are in object local space. (blob)
+#		Names of the vertex groups for this object.
 #
-#		float transform_array[animated ? <frame steps in scene> : 1][1 + #bone_names][16]
+#	bone_names : {bone_name, bone_name, ... }
 #
-#		Object transforms are stored at 'transform[frame_step][0]' and pose bone transforms are
-#		stored in transform[frame_step][i] where i one based index into 'bone_names'
+#		Name of the bones for pose data
 #
-#	nla_tracks          : {nla_track_table, nla_track_table, ...} : Array of NLA tracks in bottom up order
+#	animated : boolean
+#
+#		'true' if this object has an animation block i.e. there may be per frame pose
+#	        and object transform data
+#
+#	transform_array_offset : float transform_array[animated ? <# frames in scene> : 1][1 + #bone_names][16]
+#
+#               Array of transforms including object local transforms and pose bone transforms
+#	        Transforms are stored as 4x4 column major order matricies. Pose bone transforms
+#               are in object local space. Object transforms are stored at 'transform_array[frame_step][0]'
+#		and pose bone transforms are stored in 'transform_array[frame_step][i]' where i is a 1 based
+#		index into 'bone_names'
+#
+#	nla_tracks : {nla_track_table, nla_track_table, ...}
+#
+#		Array of NLA tracks in bottom up order
 #
 # nla_track_table:
 #
-#	name   : Name of NLA track
+#	name   : string
+#
+#		Name of NLA track
 #
 #	nla_strip_table, nla_strip_table, ...
 #
 # nls_strip_table:
 #
-#	name               : Name of NLA strip
+#	name : string
 #
-#	action             : Name of action referenced by this strip
+#		Name of NLA strip
 #
-#	frame_start        : First frame of strip
+#	action : string
 #
-#	frame_end          : Last frame of strip
+#		Name of action referenced by this strip
 #
-#	action_frame_start : First frame referenced from action
+#	frame_start : integer
 #
-#	action_frame_end   : Last frame referenced from action
+#		First frame of strip
+#
+#	frame_end : integer
+#
+#		Last frame of strip
+#
+#	action_frame_start : integer
+#
+#		First frame referenced from action
+#
+#	action_frame_end : integer
+#
+#		Last frame referenced from action
 #
 # mesh_table:
 #
-#	num_triangles                 : Number of triangles in mesh
+#	num_triangles : integer
 #
-#	num_vertices                  : Number of verticies in mesh
+#		Number of triangles in mesh
 #
-#	uv_layers = {layer_name, ...} : Names of UV layers
+#	num_vertices : integer
 #
-#	num_vertex_weights            : Total number of vertex weights stored in mesh data
+#		Number of verticies in mesh
 #
-#	index_array_offset            : Vertex array indicies for mesh triangles
+#	uv_layers : {layer_name, ...}
 #
-#		uint16_t index_array[num_triangles][3]; //Indicies into vertex arrays
+#		Names of UV layers
 #
-#	vertex_co_array_offset        : Vertex coordinates (blob)
+#	num_vertex_weights : integer
 #
-#		float coord_array[num_verticies][3];
+#		Total number of vertex weights stored in mesh data
 #
-#	vertex_normal_array_offset    : Vertex normals (blob)
+#	index_array_offset : uint16_t index_array[num_triangles][3]
 #
-#		float normal_array[num_verticies][3];
+#		Vertex array indicies for mesh triangles
 #
-#	uv_array_offset               : UV coordinate arrays (blob)
+#	vertex_co_array_offset : float coord_array[num_verticies][3]
 #
-#		float uv[num_verticies][#uv_layers][2];
+#		Vertex coordinates
 #
-#	weight_count_array_offset     : Number of weights for each vertex (blob)
+#	vertex_normal_array_offset : float normal_array[num_verticies][3]
 #
-#		uint8_t weight_count_array[num_verticies];
+#		Vertex normals
 #
-#	weight_array_offset           : Vertex weights for all verticies concatenated in order
+#	uv_array_offset: float uv[num_verticies][#uv_layers][2]
 #
-# 		uint16_t weight_array[num_vertex_weights]; //15 bit unsigned fixed point weights (i.e. 2^16 == 2.0f)
+#		UV coordinate arrays
 #
-#	group_index_array_offset      : Group indicies for vertex weight's
+#	weight_count_array_offset : uint8_t weight_count_array[num_verticies]
 #
-#		uint16_t group_index_array[num_vertex_weights]; //Indicies into vertex group array
+#		Number of weights for each vertex
+#
+#	weight_array_offset : uint16_t weight_array[num_vertex_weights] 
+#
+#		Vertex weights for all verticies concatenated in order. Weights are
+#		expressed as 15-bit unsigned fixed point values, that is, 2^15 = 1.0f
+#
+#	group_index_array_offset : uint16_t group_index_array[num_vertex_weights]
+#
+#		Group indicies for vertex weight's
 #
 # action_table:
 #
-#	frame_start            : First frame of action
+#	frame_start  : integer
 #
-#       frame_end              : Last frame of action
+#		First frame of action
 #
-#       step                   : Frames between samples (float)
+#       frame_end : integer
 #
-#       num_samples            : Number of fcurve samples in action
+#		Last frame of action
 #
-#	id_root                : Data type this action should be applied to ('MESH', 'OBJECT', etc)
+#       step : float
 #
-#       total_num_fcurves      : Total number of fcurves. This is the cum of 'num_fcurves' over all fcurve group's
+#		Frames between samples
 #
-#	fcurve_array_offset    : FCurve samples (blob)
+#       num_samples : integer
 #
-#		float samples[num_samples][total_num_fcurves];
+#		Number of fcurve samples in action
 #
-#	fcurve_group_table, fcurve_group_table, ... : Function curve groups
+#	id_root : string
+#
+#		Data type this action should be applied to ('MESH', 'OBJECT', etc)
+#
+#       total_num_fcurves : integer
+#
+#		Total number of fcurves. This is the cum of 'num_fcurves' over all fcurve group's
+#
+#	fcurve_array_offset : float samples[num_samples][total_num_fcurves]
+#
+#		Samples for all fcurves in the action
+#
+#	fcurve_group_table, fcurve_group_table, ...
 #
 # fcurve_group_table:
 #
-#	path        : Path to property controlled by the curves in this group
+#	path : string
 #
-#	num_fcurves : Number of fcurves in this group
+#		Path to property controlled by the curves in this group
+#
+#	num_fcurves : integer
+#
+#		Number of fcurves in this group
 #
 # fcurve_table:
 #
-#	path                   : Path of property controlled by the curve
+#	path : string
 #
-#	array_index            : Array index within property (for vector/matrix types)
+#		Path of property controlled by the curve
+#
+#	array_index : integer
+#
+#		Array index within property (for vector/matrix types)
 #
 # armature_table:
 #
-#	tail_array_offset      : Array of bone tail positions in object local (blob)
+#	tail_array_offset : float tail_array[#armature_table][3]
 #
-#		float tail_array[#armature_table][3]
+#		Array of bone tail positions in object local
 #
-#	transform_array_offset : Array of bone transforms in object local space. Stored as 4x4 column
-#	                         major order matricies. Position (0,0,0) in bone space is the location
-#	                         of the head of the bone (blob)
+#	transform_array_offset : float transform_array[#armature_table][16]
 #
-#		float transform_array[#armature_table][16]
+#		Array of bone transforms in object local space. Stored as 4x4 column
+#		major order matricies. Position (0,0,0) in bone space is the location
+#		of the head of the bone
 #
 #	bone_table, bone_table, ...
 #
 # bone_table:
 #
-#	name   : Name of the bone
+#	name : string
 #
-#	parent : Name of parent bone or nil if the bone has no parent
+#		Name of the bone
+#
+#	parent : string
+#
+#		Name of parent bone or nil if the bone has no parent
 #
 
 class export_BRT(bpy.types.Operator, ExportHelper):
