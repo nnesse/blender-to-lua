@@ -1,5 +1,5 @@
 bl_info = {
-	"name": "Blend RT",
+	"name": "Blender to Lua",
 	"author": "Niels Nesse",
 	"blender": (2, 69, 0),
 	"location": "File > Import-Export",
@@ -18,8 +18,8 @@ from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
 #
-# The BRT exporter generates a pair of files, a LUA fragment with the extension '.brt'
-# and a binary file with the extension '.brt.bin'. The LUA fragment returns the file's
+# The blender to lua exporter generates a pair of files, a LUA fragment with the extension '.b2l'
+# and a binary file with the extension '.b2l.bin'. The LUA fragment returns the file's
 # scene graph as a single LUA table which references blocks of data in the binary file.
 # Only integers, strings, and boolean values are stored in the LUA tables while matrix
 # transforms and bulk vertex and animation data are stored in the binary file
@@ -261,21 +261,21 @@ from bpy_extras.io_utils import (ExportHelper)
 #		Name of parent bone or nil if the bone has no parent
 #
 
-class export_BRT(bpy.types.Operator, ExportHelper):
-	"""Save a BRT File"""
-	bl_idname = "export_scene.brt"
-	bl_label = 'Export BRT'
+class export_B2L(bpy.types.Operator, ExportHelper):
+	"""Save a B2L File"""
+	bl_idname = "export_scene.b2l"
+	bl_label = 'Export B2L'
 	bl_options = {'PRESET'}
-	filename_ext = ".brt"
-	filter_glob = StringProperty(default="*.BRT", options={'HIDDEN'})
+	filename_ext = ".b2l"
+	filter_glob = StringProperty(default="*.B2L", options={'HIDDEN'})
 	check_extension = True
 
 	def execute(self, context):
 		keywords = self.as_keywords(ignore=("filter_glob", "check_existing"))
-		return save_brt(self, context, **keywords)
+		return save_b2l(self, context, **keywords)
 
 def menu_func_export(self, context):
-	self.layout.operator(export_BRT.bl_idname, text="Blend RT (.brt)")
+	self.layout.operator(export_B2L.bl_idname, text="Blender to Lua (.b2l)")
 
 def register():
 	bpy.utils.register_module(__name__)
@@ -533,7 +533,7 @@ def write_object(scene, write, blob_file, obj):
 	write("\t\t},\n")
 	transform_array.tofile(blob_file)
 
-def save_brt(operator, context, filepath=""):
+def save_b2l(operator, context, filepath=""):
 	lua_file = open(filepath, "wt")
 	blob_file = open(filepath + ".bin", "wb")
 
