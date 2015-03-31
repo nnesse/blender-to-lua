@@ -175,7 +175,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Number of weights for each vertex
 #
-#	weight_array_offset : uint16_t weight_array[num_vertex_weights] 
+#	weight_array_offset : uint16_t weight_array[num_vertex_weights]
 #
 #		Vertex weights for all verticies concatenated in order. Weights are
 #		expressed as 15-bit unsigned fixed point values, that is, 2^15 = 1.0f
@@ -347,7 +347,7 @@ def write_action(write, blob_file, action):
 	write("\t\tnum_samples=%d\n" % num_samples)
 	write("\t},\n")
 
-def write_mesh(write, blob_file, name, mesh):
+def write_mesh(write, blob_file, materials, name, mesh):
 	mesh = mesh.copy() #Make a copy of the mesh so we can alter it
 	mesh_triangulate(mesh)
 	mesh.calc_normals_split()
@@ -367,9 +367,15 @@ def write_mesh(write, blob_file, name, mesh):
 	group_index_array = array.array('H') # Vertex group indicies
 	vertex_count = 0
 
+	submeshes = {}
+
 	for polygon_index, polygon in enumerate(mesh.polygons):
+		if polygon.material_index not in submeshes:
+			submeshes[polygon.material_index] = [polygon]
+		else:
+			submeshes[polygon.material_index].append(polygon)
 		for loop_index in polygon.loop_indices:
-			vertex_key_l = [mesh.loops[loop_index].vertex_index, smooth_groups[polygon_index]]
+			vertex_key_l = [mesh.loops[loop_index].vertex_index, smooth_groups[polygon_index], polygon.material_index]
 			for uv_layer in mesh.uv_layers:
 				vertex_key_l.extend(uv_layer.data[loop_index].uv)
 			vertex_key = tuple(vertex_key_l)
@@ -403,9 +409,19 @@ def write_mesh(write, blob_file, name, mesh):
 	write("},\n");
 	write("\t\tnum_vertex_weights = %d,\n" %  len(weight_array))
 
-	for polygon_index, polygon in enumerate(mesh.polygons):
-		for loop_index in polygon.loop_indices:
-			index_array.append(loop_to_vertex_num[loop_index])
+	write("\t\tsubmeshes = {\n")
+	triangle_no = 0
+	for material_index, submesh in submeshes.items():
+		write("\t\t\t{\n")
+		write("\t\t\t\tmaterial_name = %s,\n" % (lua_string(materials[material_index].name)))
+		write("\t\t\t\ttriangle_no = %d,\n" % triangle_no)
+		write("\t\t\t\ttriangle_count = %d,\n" % len(submesh))
+		for polygon in submesh:
+			triangle_no = triangle_no + 1
+			for loop_index in polygon.loop_indices:
+				index_array.append(loop_to_vertex_num[loop_index])
+		write("\t\t\t},\n")
+	write("\t\t},\n")
 
 	write("\t\tindex_array_offset = %d,\n" % blob_file.tell())
 	index_array.tofile(blob_file)
@@ -560,7 +576,7 @@ def save_b2l(operator, context, filepath=""):
 	write_lua("meshes={\n")
 	arrays = []
 	for mesh in context.blend_data.meshes:
-		write_mesh(write_lua, blob_file, mesh.name, mesh)
+		write_mesh(write_lua, blob_file, context.blend_data.materials, mesh.name, mesh)
 	write_lua("},\n")
 
 	write_lua("actions={\n")
