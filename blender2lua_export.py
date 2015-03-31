@@ -312,41 +312,6 @@ def lua_array3f(a):
 def lua_array4f(a):
 	return "{%f,%f,%f,%f}" % (a[0],a[1],a[2],a[3])
 
-def write_action(write, blob_file, action):
-	write("\t[%s]={\n" % lua_string(action.name))
-	frame_start = action.frame_range[0]
-	frame_end = action.frame_range[1]
-	write("\t\tframe_start=%d,\n" % frame_start)
-	write("\t\tframe_end=%d,\n" % frame_end)
-	write("\t\tid_root=%s,\n" % lua_string(action.id_root))
-	write("\t\tstep=1.0,\n")
-	write("\t\tfcurve_array_offset=%d,\n" % blob_file.tell())
-	write("\t\ttotal_num_fcurves=%d,\n" % len(action.fcurves))
-	path = ""
-	num_elem = 0
-	for fcurve in action.fcurves:
-		if fcurve.data_path != path:
-			if num_elem != 0:
-				write("\t\t{path=%s,num_fcurves=%d},\n" % (lua_string(path), num_elem))
-			path = fcurve.data_path
-			num_elem = 1
-		else:
-			num_elem = num_elem + 1
-	if path != "" and num_elem != 0:
-		write("\t\t{path=%s,num_fcurves=%d},\n" % (lua_string(path), num_elem))
-
-	fcurve_array = array.array('f')
-	frame = frame_start
-	num_samples = 0
-	while frame <= frame_end:
-		for fcurve in action.fcurves:
-			fcurve_array.append(fcurve.evaluate(frame))
-		frame += 1.0
-		num_samples = num_samples + 1
-	fcurve_array.tofile(blob_file)
-	write("\t\tnum_samples=%d\n" % num_samples)
-	write("\t},\n")
-
 def write_mesh(write, blob_file, materials, name, mesh):
 	mesh = mesh.copy() #Make a copy of the mesh so we can alter it
 	mesh_triangulate(mesh)
@@ -577,11 +542,6 @@ def save_b2l(operator, context, filepath=""):
 	arrays = []
 	for mesh in context.blend_data.meshes:
 		write_mesh(write_lua, blob_file, context.blend_data.materials, mesh.name, mesh)
-	write_lua("},\n")
-
-	write_lua("actions={\n")
-	for action in context.blend_data.actions:
-		write_action(write_lua, blob_file, action)
 	write_lua("},\n")
 
 	write_lua("armatures={\n")
