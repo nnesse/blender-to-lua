@@ -46,8 +46,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # 	meshes : {[mesh_name] = mesh_table, ...}
 #
-# 	actions : {[action_name] = action_table, ...}
-#
 #	armatures : {[armature_name] = armature_table, ...}
 #
 # scene_table:
@@ -155,6 +153,8 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Total number of vertex weights stored in mesh data
 #
+#	submehses : { submesh, submesh, ... }
+#
 #	index_array_offset : uint16_t index_array[num_triangles][3]
 #
 #		Vertex array indicies for mesh triangles
@@ -184,57 +184,21 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Group indicies for vertex weight's
 #
-# action_table:
+# submesh_table:
 #
-#	frame_start  : integer
+#	material_name : String
 #
-#		First frame of action
+#		Name of the material for this submesh. B2L does not store any material
+#		data directly but submeshes in different meshes with the same material
+#		refer to the  same material.
 #
-#       frame_end : integer
+#	triangle_no : integer
 #
-#		Last frame of action
+#		First triangle in 'index_array' of this submesh
 #
-#       step : float
+#	triangle_count : integer
 #
-#		Frames between samples
-#
-#       num_samples : integer
-#
-#		Number of fcurve samples in action
-#
-#	id_root : string
-#
-#		Data type this action should be applied to ('MESH', 'OBJECT', etc)
-#
-#       total_num_fcurves : integer
-#
-#		Total number of fcurves. This is the cum of 'num_fcurves' over all fcurve group's
-#
-#	fcurve_array_offset : float samples[num_samples][total_num_fcurves]
-#
-#		Samples for all fcurves in the action
-#
-#	fcurve_group_table, fcurve_group_table, ...
-#
-# fcurve_group_table:
-#
-#	path : string
-#
-#		Path to property controlled by the curves in this group
-#
-#	num_fcurves : integer
-#
-#		Number of fcurves in this group
-#
-# fcurve_table:
-#
-#	path : string
-#
-#		Path of property controlled by the curve
-#
-#	array_index : integer
-#
-#		Array index within property (for vector/matrix types)
+#		Number of triangles in this submesh
 #
 # armature_table:
 #
