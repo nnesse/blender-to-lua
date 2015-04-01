@@ -513,6 +513,11 @@ def save_b2l(operator, context, filepath=""):
 		write_armature(write_lua, blob_file, armature)
 	write_lua("},\n")
 
+	write_lua("materials={\n")
+	for material in context.blend_data.materials:
+		write_lua("\t%s,\n" % lua_string(material.name))
+	write_lua("},\n")
+
 	write_lua("}\n")
 
 	lua_file.close()
