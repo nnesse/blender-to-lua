@@ -80,10 +80,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Names of the vertex groups for this object.
 #
-#	bone_names : {bone_name, bone_name, ... }
-#
-#		Name of the bones for pose data
-#
 #	animated : boolean
 #
 #		'true' if this object has an animation block i.e. there may be per frame pose
