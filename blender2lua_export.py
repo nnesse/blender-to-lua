@@ -127,14 +127,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Last frame of strip
 #
-#	action_frame_start : integer
-#
-#		First frame referenced from action
-#
-#	action_frame_end : integer
-#
-#		Last frame referenced from action
-#
 # mesh_table:
 #
 #	num_triangles : integer
@@ -453,11 +445,8 @@ def write_object(scene, write, blob_file, obj):
 				return
 			write("\t\t\t\t\t{\n")
 			write("\t\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
-			write("\t\t\t\t\t\taction = %s,\n" % lua_string(strip.action.name))
 			write("\t\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
 			write("\t\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
-			write("\t\t\t\t\t\taction_frame_start = %d,\n" % strip.action_frame_start)
-			write("\t\t\t\t\t\taction_frame_end = %d,\n" % strip.action_frame_end)
 			write("\t\t\t\t\t},\n")
 
 		def write_nla_track(track):
