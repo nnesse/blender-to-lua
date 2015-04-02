@@ -89,6 +89,10 @@ from bpy_extras.io_utils import (ExportHelper)
 #		'true' if this object has an animation block i.e. there may be per frame pose
 #	        and object transform data
 #
+#	armature_deform: string (optional)
+#
+#		If set then this object is deformed by the armature 'armature_deform'
+#
 #	object_transform_array_offset : float object_transform_array[animated ? <# frames in scene> : 1][16]
 #
 #               Array of transforms for this object relative to the parent object space.
