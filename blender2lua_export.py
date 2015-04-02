@@ -428,7 +428,9 @@ def write_object(scene, write, blob_file, obj):
 		flatten_4x4mat(transform_array, obj.matrix_local)
 		if obj.pose:
 			for pbone in obj.pose.bones:
-				flatten_4x4mat(transform_array, pbone.matrix)
+				rest_bone_inv = mathutils.Matrix.copy(pbone.bone.matrix_local)
+				mathutils.Matrix.invert(rest_bone_inv)
+				flatten_4x4mat(transform_array, pbone.matrix * rest_bone_inv)
 
 	if obj.pose is not None:
 		write("\t\t\tbone_names = {\n")
