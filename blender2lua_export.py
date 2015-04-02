@@ -89,13 +89,13 @@ from bpy_extras.io_utils import (ExportHelper)
 #		'true' if this object has an animation block i.e. there may be per frame pose
 #	        and object transform data
 #
-#	transform_array_offset : float transform_array[animated ? <# frames in scene> : 1][1 + #bone_names][16]
+#	object_transform_array_offset : float object_transform_array[animated ? <# frames in scene> : 1][16]
 #
-#               Array of transforms including object local transforms and pose bone transforms
-#	        Transforms are stored as 4x4 column major order matricies. Pose bone transforms
-#               are in object local space. Object transforms are stored at 'transform_array[frame_step][0]'
-#		and pose bone transforms are stored in 'transform_array[frame_step][i]' where i is a 1 based
-#		index into 'bone_names'
+#               Array of transforms for this object relative to the parent object space.
+#
+#	vertex_group_transform_array_offset: float vertex_group_transform_array[animated ? <# frames in scene> : 1][#vertex_groups][16] 
+#
+#		Tranforms to be applied to each vertex group in object space, according to the weights stored in the associated mesh.
 #
 #	nla_tracks : {nla_track_table, nla_track_table, ...}
 #
@@ -413,24 +413,33 @@ def write_object(scene, write, blob_file, obj):
 			write("\t\t\t\t%s,\n" % lua_string(group.name))
 		write("\t\t\t},\n")
 
-	transform_array = array.array('f') #Vertex coordinates
-	write("\t\t\ttransform_array_offset = %d,\n" % blob_file.tell())
+	object_transform_array = array.array('f')
+	vertex_group_transform_array = array.array('f')
+
+	aobj = None
+
+	for modifier in obj.modifiers:
+		if modifier.type == 'ARMATURE':
+			aobj = modifier.object
+			write("\t\t\tarmature_deform = %s,\n" % lua_string(aobj.name))
+			break
 
 	def write_object_frame():
-		flatten_4x4mat(transform_array, obj.matrix_local)
-		if obj.pose:
-			for pbone in obj.pose.bones:
+		flatten_4x4mat(object_transform_array, obj.matrix_local)
+		for group in obj.vertex_groups:
+			if aobj and (group.name in aobj.pose.bones):
+				pbone = aobj.pose.bones[group.name]
+				matrix_local_inv = mathutils.Matrix.copy(obj.matrix_local)
+				mathutils.Matrix.invert(matrix_local_inv)
 				rest_bone_inv = mathutils.Matrix.copy(pbone.bone.matrix_local)
 				mathutils.Matrix.invert(rest_bone_inv)
-				flatten_4x4mat(transform_array, pbone.matrix * rest_bone_inv)
+				#TODO: we are assuming that the armature is our immediate parent which is probably
+				# but not neccisarily true
+				flatten_4x4mat(vertex_group_transform_array, matrix_local_inv * pbone.matrix * rest_bone_inv * obj.matrix_local)
+			else:
+				flatten_4x4mat(vertex_group_transform_array, mathutils.Matrix.Identity(4))
 
-	if obj.pose is not None:
-		write("\t\t\tbone_names = {\n")
-		for pbone in obj.pose.bones:
-			write("\t\t\t\t%s,\n" % lua_string(pbone.bone.name))
-		write("\t\t\t},\n")
-
-	if obj.animation_data is not None:
+	if (obj.animation_data is not None) or (aobj and aobj.animation_data is not None):
 		write("\t\t\tanimated = true,\n")
 		write_object_frame()
 		frame = scene.frame_start
@@ -458,16 +467,20 @@ def write_object(scene, write, blob_file, obj):
 				write_nla_strip(strip)
 			write("\t\t\t\t},\n")
 
-		write("\t\t\tnla_tracks = {\n")
-		for track in obj.animation_data.nla_tracks:
-			write_nla_track(track)
-		write("\t\t\t},\n")
+		if obj.animation_data:
+			write("\t\t\tnla_tracks = {\n")
+			for track in obj.animation_data.nla_tracks:
+				write_nla_track(track)
+			write("\t\t\t},\n")
 	else:
 		write("\t\t\tanimated = false,\n")
 		scene.frame_set(scene.frame_start)
 		write_object_frame()
+	write("\t\t\tobject_transform_array_offset = %d,\n" % blob_file.tell())
+	object_transform_array.tofile(blob_file)
+	write("\t\t\tvertex_group_transform_array_offset = %d,\n" % blob_file.tell())
+	vertex_group_transform_array.tofile(blob_file)
 	write("\t\t},\n")
-	transform_array.tofile(blob_file)
 
 def save_b2l(operator, context, filepath=""):
 	lua_file = open(filepath, "wt")
