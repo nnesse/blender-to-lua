@@ -76,28 +76,33 @@ from bpy_extras.io_utils import (ExportHelper)
 #		Name of data this object refers to. Data will be found in it's corresponding
 #	        type specific table inside the root table.
 #
-#	vertex_groups : {group_name, group_name, ... }
+#	num_frames : integer
 #
-#		Names of the vertex groups for this object.
-#
-#	animated : boolean
-#
-#		'true' if this object has an animation block i.e. there may be per frame pose
-#	        and object transform data
+#		Number of animation frames stored in transform arrays (see below). This
+#		value will be set to 1 if the object is not animated.
 #
 #	armature_deform: string (optional)
 #
-#		If set then this object is deformed by the armature 'armature_deform'
+#		If set then the object is deformed by the armature named 'armature_deform'
 #
-#	object_transform_array_offset : float object_transform_array[animated ? <# frames in scene> : 1][16]
+#	object_transform_array_offset :
+#
+#		float object_transform_array[num_frames][16]
 #
 #               Array of transforms for this object relative to the parent object space.
 #
-#	vertex_group_transform_array_offset: float vertex_group_transform_array[animated ? <# frames in scene> : 1][#vertex_groups][16] 
+#	vertex_groups : {group_name, group_name, ... } (optional)
 #
-#		Tranforms to be applied to each vertex group in object space, according to the weights stored in the associated mesh.
+#		Names of the vertex groups for this object.
 #
-#	nla_tracks : {nla_track_table, nla_track_table, ...}
+#	vertex_group_transform_array_offset: (optional)
+#
+#		float vertex_group_transform_array[num_frames][#vertex_groups][16]
+#
+#		Tranforms to be applied to each vertex group in object space, according
+#		to the weights stored in the associated mesh.
+#
+#	nla_tracks : {nla_track_table, nla_track_table, ...} (optional)
 #
 #		Array of NLA tracks in bottom up order
 #
@@ -440,14 +445,17 @@ def write_object(scene, write, blob_file, obj):
 				flatten_4x4mat(vertex_group_transform_array, mathutils.Matrix.Identity(4))
 
 	if (obj.animation_data is not None) or (aobj and aobj.animation_data is not None):
-		write("\t\t\tanimated = true,\n")
 		write_object_frame()
 		frame = scene.frame_start
 		scene.frame_set(frame)
+		num_frames = 0
 		while frame < scene.frame_end:
 			scene.frame_set(frame)
 			write_object_frame()
 			frame = frame + scene.frame_step
+			num_frames = num_frames + 1
+
+		write("\t\t\tnum_frames = %d,\n" % num_frames)
 
 		def write_nla_strip(strip):
 			if strip.mute is True:
@@ -467,19 +475,20 @@ def write_object(scene, write, blob_file, obj):
 				write_nla_strip(strip)
 			write("\t\t\t\t},\n")
 
-		if obj.animation_data:
+		if obj.animation_data and len(obj.animation_data.nla_tracks) > 0:
 			write("\t\t\tnla_tracks = {\n")
 			for track in obj.animation_data.nla_tracks:
 				write_nla_track(track)
 			write("\t\t\t},\n")
 	else:
-		write("\t\t\tanimated = false,\n")
+		write("\t\t\tnum_frames = 1,\n")
 		scene.frame_set(scene.frame_start)
 		write_object_frame()
 	write("\t\t\tobject_transform_array_offset = %d,\n" % blob_file.tell())
 	object_transform_array.tofile(blob_file)
-	write("\t\t\tvertex_group_transform_array_offset = %d,\n" % blob_file.tell())
-	vertex_group_transform_array.tofile(blob_file)
+	if len(obj.vertex_groups) > 0:
+		write("\t\t\tvertex_group_transform_array_offset = %d,\n" % blob_file.tell())
+		vertex_group_transform_array.tofile(blob_file)
 	write("\t\t},\n")
 
 def save_b2l(operator, context, filepath=""):
