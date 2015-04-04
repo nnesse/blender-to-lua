@@ -14,6 +14,7 @@ import bpy
 import mathutils
 import array
 import bmesh
+import math
 from bpy.props import (StringProperty)
 from bpy_extras.io_utils import (ExportHelper)
 
@@ -168,18 +169,25 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		UV coordinate arrays
 #
-#	weight_count_array_offset : uint8_t weight_count_array[num_verticies]
+#	weights_per_vertex : integer
 #
-#		Number of weights for each vertex
+#		Number of weights stored for each vertex. This will be 0
+#		if no verticies are assigned to any groups
 #
-#	weight_array_offset : uint16_t weight_array[num_vertex_weights]
+#	group_element_array_offset :
 #
-#		Vertex weights for all verticies concatenated in order. Weights are
-#		expressed as 15-bit unsigned fixed point values, that is, 2^15 = 1.0f
+#		struct group_element {
+#			int16_t group_index;
+#			int16_t weight;
+#		}
 #
-#	group_index_array_offset : uint16_t group_index_array[num_vertex_weights]
+#		struct group_element group_element_array[num_verticies][weights_per_vertex];
 #
-#		Group indicies for vertex weight's
+#		Weighted vertex group assignments for each vertex. Weights are expressed as 15-bit
+#		signed fixed point values so that 2^14 = 1.0f. Elements are pre-sorted in reverse
+#		weight order so that the largest weights appear first. If a vertex belongs to fewer than
+#		'weights_per_vertex' groups then the array is padded with elements with 'group_index'
+#		set to -1 and `weight` set to zero.
 #
 # submesh_table:
 #
@@ -288,12 +296,14 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	vertex_co_array = array.array('f') #Vertex coordinates
 	vertex_normal_array = array.array('f') #Vertex normals
 	uv_array = array.array('f') #Vertex normals
-	weight_count_array = array.array('B') # Number of weights in each vertex
-	weight_array = array.array('H') # Vertex weights
-	group_index_array = array.array('H') # Vertex group indicies
+	group_element_array = array.array('h') # Vertex weights
 	vertex_count = 0
 
 	submeshes = {}
+
+	weights_per_vert = 0
+
+	vertex_list = []
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		if polygon.material_index not in submeshes:
@@ -320,11 +330,26 @@ def write_mesh(write, blob_file, materials, name, mesh):
 				for uv_layer in mesh.uv_layers:
 					uv_array.extend(uv_layer.data[loop_index].uv)
 
+				groups_copy = []
 				for elem in vertex.groups:
-					group_index_array.append(elem.group)
-					weight_array.append(int(elem.weight * 256 * 128))
-				weight_count_array.append(len(vertex.groups))
+					temp = (elem.group, elem.weight)
+					groups_copy.append(temp)
+
+				groups_sorted = sorted(groups_copy, key = lambda x: x[1], reverse = True)
+
+				vertex_list.append(groups_sorted)
+				weights_per_vert = max(weights_per_vert, len(groups_sorted))
 			loop_to_vertex_num[loop_index] = vertex_num
+
+	if weights_per_vert > 0:
+		for vertex in vertex_list:
+			for elem in vertex:
+				group_element_array.append(elem[0])
+				group_element_array.append(int(elem[1] * 128 * 128))
+			for i in range(len(vertex), weights_per_vert):
+				group_element_array.append(-1)
+				group_element_array.append(0)
+
 
 	write("\t['%s'] = {\n" % name)
 	write("\t\tnum_triangles = %d,\n" % len(mesh.polygons))
@@ -333,7 +358,8 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	for uv_layer in mesh.uv_layers:
 		write("%s," % lua_string(uv_layer.name))
 	write("},\n");
-	write("\t\tnum_vertex_weights = %d,\n" %  len(weight_array))
+
+	write("\t\tweights_per_vertex = %d,\n" % weights_per_vert);
 
 	write("\t\tsubmeshes = {\n")
 	triangle_no = 0
@@ -357,12 +383,9 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	vertex_normal_array.tofile(blob_file)
 	write("\t\tuv_array_offset = %d,\n" % blob_file.tell())
 	uv_array.tofile(blob_file)
-	write("\t\tweight_count_array_offset = %d,\n" % blob_file.tell())
-	weight_count_array.tofile(blob_file)
-	write("\t\tweight_array_offset = %d,\n" % blob_file.tell())
-	weight_array.tofile(blob_file)
-	write("\t\tgroup_index_array_offset = %d,\n" % blob_file.tell())
-	group_index_array.tofile(blob_file)
+	if weights_per_vert > 0:
+		write("\t\tgroup_element_array_offset = %d,\n" % blob_file.tell())
+		group_element_array.tofile(blob_file)
 	write("\t},\n");
 	bpy.data.meshes.remove(mesh)
 	return
