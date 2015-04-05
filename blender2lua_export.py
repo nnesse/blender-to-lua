@@ -77,12 +77,47 @@ from bpy_extras.io_utils import (ExportHelper)
 #		Name of data this object refers to. Data will be found in it's corresponding
 #	        type specific table inside the root table.
 #
+#	parent : string
+#
+#		Name of the parent object
+#
+#	parent_type : string
+#
+#		One of 'OBJECT', 'BONE', 'VERTEX', or 'VERTEX_3'.
+#
+#		- If the value is 'OBJECT' then this object's transform is relative to it's
+#		parent's object transform.
+#
+#		- If the value is 'BONE' then this object's transform is relative to the
+#		transform of the bone 'parent_bone' in the parent object.
+#
+#		- If the value is 'VERTEX' then this object's transform is relative to the
+#		vertex number 'parent_vertex' in the parent object.
+#
+#		- If the value is 'VERTEX_3' then this object's transform is relative to
+#		and oritened by the vertex triple 'parent_verticies' in the parent
+#		object. TODO: Need to investigate the exact formula used in this case
+#
+#	parent_bone : string (optional)
+#
+#		Bone the the parent object that this object is parented to. See 'parent_type'
+#
+#	parent_vertex : integer (optional)
+#
+#		Index of the vertex in the parent object that this object is parented to. See
+#		'parent_type'.
+#
+#	parent_verticies : {integer, integer, integer} (optional)
+#
+#		Three vertex indicies into the parent object's mesh that define
+#		the local space that this object is parented to. See 'parent_type'.
+#
 #	num_frames : integer
 #
 #		Number of animation frames stored in transform arrays (see below). This
 #		value will be set to 1 if the object is not animated.
 #
-#	armature_deform: string (optional)
+#	armature_deform : string (optional)
 #
 #		If set then the object is deformed by the armature named 'armature_deform'
 #
