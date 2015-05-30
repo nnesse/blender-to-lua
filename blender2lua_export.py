@@ -475,98 +475,59 @@ def flatten_4x4mat(dest, src):
 			dest.append(src[i][j])
 
 def write_object(scene, write, blob_file, obj):
-	write("\t\t[%s] = {\n" % lua_string(obj.name))
+	write("\t[%s] = {\n" % lua_string(obj.name))
 	if obj.parent:
-		write("\t\t\tparent = %s,\n" % lua_string(obj.parent.name))
-		write("\t\t\tparent_type = %s,\n" % lua_string(obj.parent_type))
+		write("\t\tparent = %s,\n" % lua_string(obj.parent.name))
+		write("\t\tparent_type = %s,\n" % lua_string(obj.parent_type))
 		if obj.parent_type == 'BONE':
-			write("\t\t\tparent_bone = %s,\n" % lua_string(obj.parent_type))
+			write("\t\tparent_bone = %s,\n" % lua_string(obj.parent_type))
 		elif obj.parent_type == 'VERTEX':
-			write("\t\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
+			write("\t\tparent_vertex = %d,\n" % obj.parent_verticies[0])
 		elif obj.parent_type == 'VERTEX_3':
-			write("\t\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
-	write("\t\t\ttype = %s,\n" % lua_string(obj.type))
+			write("\t\tparent_vertices = {%d,%d,%d},\n" % (obj.parent_verticies[0], obj.parent_verticies[1],obj.parent_verticies[2]))
+	write("\t\ttype = %s,\n" % lua_string(obj.type))
 	if obj.data:
-		write("\t\t\tdata = %s,\n" % lua_string(obj.data.name))
+		write("\t\tdata = %s,\n" % lua_string(obj.data.name))
 
 	if len(obj.vertex_groups) > 0:
-		write("\t\t\tvertex_groups = {\n")
+		write("\t\tvertex_groups = {\n")
 		for group in obj.vertex_groups:
 			write("\t\t\t\t%s,\n" % lua_string(group.name))
-		write("\t\t\t},\n")
-
-	object_transform_array = array.array('f')
-	vertex_group_transform_array = array.array('f')
+		write("\t\t},\n")
 
 	aobj = None
 
 	for modifier in obj.modifiers:
 		if modifier.type == 'ARMATURE':
 			aobj = modifier.object
-			write("\t\t\tarmature_deform = %s,\n" % lua_string(aobj.name))
+			write("\t\tarmature_deform = %s,\n" % lua_string(aobj.name))
 			break
 
-	def write_object_frame():
-		flatten_4x4mat(object_transform_array, obj.matrix_local)
-		for group in obj.vertex_groups:
-			if aobj and (group.name in aobj.pose.bones):
-				pbone = aobj.pose.bones[group.name]
-				matrix_local_inv = mathutils.Matrix.copy(obj.matrix_local)
-				mathutils.Matrix.invert(matrix_local_inv)
-				rest_bone_inv = mathutils.Matrix.copy(pbone.bone.matrix_local)
-				mathutils.Matrix.invert(rest_bone_inv)
-				#TODO: we are assuming that the armature is our immediate parent which is probably
-				# but not neccisarily true
-				flatten_4x4mat(vertex_group_transform_array, matrix_local_inv * pbone.matrix * rest_bone_inv * obj.matrix_local)
-			else:
-				flatten_4x4mat(vertex_group_transform_array, mathutils.Matrix.Identity(4))
-
-	if (obj.animation_data is not None) or (aobj and aobj.animation_data is not None):
-		write_object_frame()
-		frame = scene.frame_start
-		scene.frame_set(frame)
-		num_frames = 0
-		while frame < scene.frame_end:
-			scene.frame_set(frame)
-			write_object_frame()
-			frame = frame + scene.frame_step
-			num_frames = num_frames + 1
-
-		write("\t\t\tnum_frames = %d,\n" % num_frames)
-
+	if (obj.animation_data is not None):
 		def write_nla_strip(strip):
 			if strip.mute is True:
 				return
-			write("\t\t\t\t\t{\n")
-			write("\t\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
-			write("\t\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
-			write("\t\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
-			write("\t\t\t\t\t},\n")
+			write("\t\t\t\t{\n")
+			write("\t\t\t\t\tname = %s,\n" % lua_string(strip.name))
+			write("\t\t\t\t\tframe_start = %d,\n" % strip.frame_start)
+			write("\t\t\t\t\tframe_end = %d,\n" % strip.frame_end)
+			write("\t\t\t\t},\n")
 
 		def write_nla_track(track):
 			if track.mute is True:
 				return
-			write("\t\t\t\t{\n")
-			write("\t\t\t\t\tname = %s,\n" % lua_string(track.name))
+			write("\t\t\t{\n")
+			write("\t\t\t\tname = %s,\n" % lua_string(track.name))
 			for strip in track.strips:
 				write_nla_strip(strip)
-			write("\t\t\t\t},\n")
+			write("\t\t\t},\n")
 
 		if obj.animation_data and len(obj.animation_data.nla_tracks) > 0:
-			write("\t\t\tnla_tracks = {\n")
+			write("\t\tnla_tracks = {\n")
 			for track in obj.animation_data.nla_tracks:
 				write_nla_track(track)
-			write("\t\t\t},\n")
-	else:
-		write("\t\t\tnum_frames = 1,\n")
-		scene.frame_set(scene.frame_start)
-		write_object_frame()
-	write("\t\t\tobject_transform_array_offset = %d,\n" % blob_file.tell())
-	object_transform_array.tofile(blob_file)
-	if len(obj.vertex_groups) > 0:
-		write("\t\t\tvertex_group_transform_array_offset = %d,\n" % blob_file.tell())
-		vertex_group_transform_array.tofile(blob_file)
-	write("\t\t},\n")
+			write("\t\t},\n")
+	write("\t},\n")
 
 def save_b2l(operator, context, filepath=""):
 	lua_file = open(filepath, "wt")
@@ -588,10 +549,55 @@ def save_b2l(operator, context, filepath=""):
 		write_lua("\t\tframe_step = %f,\n" % scene.frame_step)
 		write_lua("\t\tobjects = {\n")
 		for obj in scene.objects:
-			write_lua("\t\t\t%s,\n" % lua_string(obj.name))
-		write_lua("\t\t},\n")
-		write_lua("\t}\n")
-	write_lua("},\n")
+			write_lua("\t\t\t[%s] = {\n" % lua_string(obj.name))
+
+			object_transform_array = array.array('f')
+			vertex_group_transform_array = array.array('f')
+
+			aobj = None
+
+			for modifier in obj.modifiers:
+				if modifier.type == 'ARMATURE':
+					aobj = modifier.object
+					break
+
+			def write_object_frame(aobj):
+				flatten_4x4mat(object_transform_array, obj.matrix_local)
+				for group in obj.vertex_groups:
+					if aobj and (group.name in aobj.pose.bones):
+						pbone = aobj.pose.bones[group.name]
+						matrix_local_inv = mathutils.Matrix.copy(obj.matrix_local)
+						mathutils.Matrix.invert(matrix_local_inv)
+						rest_bone_inv = mathutils.Matrix.copy(pbone.bone.matrix_local)
+						mathutils.Matrix.invert(rest_bone_inv)
+						#TODO: we are assuming that the armature is our immediate parent which is probably
+						# but not neccisarily true
+						flatten_4x4mat(vertex_group_transform_array, matrix_local_inv * pbone.matrix * rest_bone_inv * obj.matrix_local)
+					else:
+						flatten_4x4mat(vertex_group_transform_array, mathutils.Matrix.Identity(4))
+
+			frame = scene.frame_start
+			scene.frame_set(frame)
+			num_frames = 0
+			if (obj.animation_data) or (aobj and aobj.animation_data):
+				while frame < scene.frame_end:
+					write_object_frame(aobj)
+					frame = frame + 1
+					scene.frame_set(frame)
+					num_frames = num_frames + 1
+			else:
+				write_object_frame()
+				num_frames = num_frames + 1
+			write_lua("\t\t\t\tnum_frames = %d,\n" % num_frames)
+			write_lua("\t\t\t\tobject_transform_array_offset = %d,\n" % blob_file.tell())
+			object_transform_array.tofile(blob_file)
+			if len(obj.vertex_groups) > 0:
+				write_lua("\t\t\t\tvertex_group_transform_array_offset = %d,\n" % blob_file.tell())
+				vertex_group_transform_array.tofile(blob_file)
+			write_lua("\t\t\t},\n") #Object
+		write_lua("\t\t},\n") #Objects
+		write_lua("\t},\n") #Scene
+	write_lua("},\n") #Scenes
 
 	write_lua("objects = {\n")
 	for obj in context.blend_data.objects:
