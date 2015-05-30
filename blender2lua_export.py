@@ -31,8 +31,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #  - Identifiers named "X_table" refer to instances of table type X.
 #
-#  - Identifiers ending in "_name" are strings.
-#
 #  - Field names ending in "_offset" are byte offsets into the binary file.
 #	The field's type is described in terms of C data types and
 #	fields in the containing table.
@@ -43,9 +41,11 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # root_table:
 #
-#	scene : scene_table
+#	scenes : {[scene_name] = scene_table, ...}
 #
 # 	meshes : {[mesh_name] = mesh_table, ...}
+#
+#	objects : {[object_name] = object_table, ...}
 #
 #	armatures : {[armature_name] = armature_table, ...}
 #
@@ -63,7 +63,9 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Number of frames per "step"
 #
-#	objects : { [object_name] = object_table, ... }
+#	objects : { object_name, object_name, ... }
+#
+#		List of objects belonging to the scene
 #
 # object_table:
 #
@@ -121,7 +123,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		If set then the object is deformed by the armature named 'armature_deform'
 #
-#	object_transform_array_offset :
+#	object_transform_array_offset : integer
 #
 #		float object_transform_array[num_frames][16]
 #
@@ -131,7 +133,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Names of the vertex groups for this object.
 #
-#	vertex_group_transform_array_offset: (optional)
+#	vertex_group_transform_array_offset: integer (optional)
 #
 #		float vertex_group_transform_array[num_frames][#vertex_groups][16]
 #
@@ -226,7 +228,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # submesh_table:
 #
-#	material_name : String
+#	material_name : string
 #
 #		Name of the material for this submesh. B2L does not store any material
 #		data directly but submeshes in different meshes with the same material
@@ -242,11 +244,15 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 # armature_table:
 #
-#	tail_array_offset : float tail_array[#armature_table][3]
+#	tail_array_offset : integer
+#
+#		float tail_array[#armature_table][3]
 #
 #		Array of bone tail positions in object local
 #
-#	transform_array_offset : float transform_array[#armature_table][16]
+#	transform_array_offset : integer
+#
+#		float transform_array[#armature_table][16]
 #
 #		Array of bone transforms in object local space. Stored as 4x4 column
 #		major order matricies. Position (0,0,0) in bone space is the location
@@ -320,6 +326,11 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	mesh = mesh.copy() #Make a copy of the mesh so we can alter it
 	mesh_triangulate(mesh)
 	mesh.calc_normals_split()
+
+	num_uv_layers = len(mesh.uv_layers)
+
+	if num_uv_layers > 0:
+		mesh.calc_tangents()
 	smooth_groups, num_groups = mesh.calc_smooth_groups()
 
 	if len(mesh.polygons) == 0:
@@ -330,6 +341,7 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	index_array = array.array('H')  #Vertex index triplets for mesh triangles
 	vertex_co_array = array.array('f') #Vertex coordinates
 	vertex_normal_array = array.array('f') #Vertex normals
+	tangent_array = array.array('f') #Vertex tangent and bitangent
 	uv_array = array.array('f') #Vertex normals
 	weights_array = array.array('h') # Vertex weights
 	vertex_count = 0
@@ -361,6 +373,9 @@ def write_mesh(write, blob_file, materials, name, mesh):
 				vertex_count = vertex_count + 1
 				vertex_co_array.extend(vertex.undeformed_co)
 				vertex_normal_array.extend(mesh_loop.normal)
+				if num_uv_layers > 0:
+					tangent_array.extend(mesh_loop.tangent)
+					tangent_array.append(mesh_loop.bitangent_sign)
 
 				for uv_layer in mesh.uv_layers:
 					uv_array.extend(uv_layer.data[loop_index].uv)
@@ -422,6 +437,9 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	if weights_per_vert > 0:
 		write("\t\tweights_array_offset = %d,\n" % blob_file.tell())
 		weights_array.tofile(blob_file)
+	if num_uv_layers > 0:
+		write("\t\ttangent_array_offset = %d,\n" % blob_file.tell())
+		tangent_array.tofile(blob_file)
 	write("\t},\n");
 	bpy.data.meshes.remove(mesh)
 	return
@@ -562,20 +580,25 @@ def save_b2l(operator, context, filepath=""):
 	#Write blend data as LUA script
 	write_lua("return {\n")
 
-	scene = context.scene
+	write_lua("scenes = {\n")
+	for scene in context.blend_data.scenes:
+		write_lua("\t[%s] = {\n" % lua_string(scene.name))
+		write_lua("\t\tframe_start = %f,\n" % scene.frame_start)
+		write_lua("\t\tframe_end= %f,\n" % scene.frame_end)
+		write_lua("\t\tframe_step = %f,\n" % scene.frame_step)
+		write_lua("\t\tobjects = {\n")
+		for obj in scene.objects:
+			write_lua("\t\t\t%s,\n" % lua_string(obj.name))
+		write_lua("\t\t},\n")
+		write_lua("\t}\n")
+	write_lua("},\n")
 
-	write_lua("scene = {\n")
-	write_lua("\tframe_start = %f,\n" % scene.frame_start)
-	write_lua("\tframe_end= %f,\n" % scene.frame_end)
-	write_lua("\tframe_step = %f,\n" % scene.frame_step)
-	write_lua("\tobjects = {\n")
-	for obj in scene.objects:
+	write_lua("objects = {\n")
+	for obj in context.blend_data.objects:
 		write_object(context.scene, write_lua, blob_file, obj)
-	write_lua("\t}\n")
 	write_lua("},\n")
 
 	write_lua("meshes={\n")
-	arrays = []
 	for mesh in context.blend_data.meshes:
 		write_mesh(write_lua, blob_file, context.blend_data.materials, mesh.name, mesh)
 	write_lua("},\n")
