@@ -76,8 +76,9 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	data : string
 #
-#		Name of data this object refers to. Data will be found in it's corresponding
-#	        type specific table inside the root table.
+#		Name of data this object refers to. The data can be located by indexing the
+#	        appropriate sub-table of the root table. For instance if 'type' is
+#		'ARMATURE' then the data can be found in 'root_table.armatures[data]'.
 #
 #	parent : string
 #
