@@ -188,7 +188,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Total number of vertex weights stored in mesh data
 #
-#	submehses : { submesh, submesh, ... }
+#	submeshes : { submesh_table, submesh_table, ... }
 #
 #	index_array_offset : uint16_t index_array[num_triangles][3]
 #
@@ -231,8 +231,8 @@ from bpy_extras.io_utils import (ExportHelper)
 #	material_name : string
 #
 #		Name of the material for this submesh. B2L does not store any material
-#		data directly but submeshes in different meshes with the same material
-#		refer to the  same material.
+#		data directly but submeshes with the same material name should have the same
+#		material properties.
 #
 #	triangle_no : integer
 #
