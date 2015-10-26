@@ -126,7 +126,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	object_transform_array_offset : integer
 #
-#		float object_transform_array[num_frames][16]
+#		float object_transform_array[num_frames][4][4]
 #
 #               Array of transforms for this object relative to the parent object space.
 #
@@ -136,7 +136,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	vertex_group_transform_array_offset: integer (optional)
 #
-#		float vertex_group_transform_array[num_frames][#vertex_groups][16]
+#		float vertex_group_transform_array[num_frames][#vertex_groups][4][4]
 #
 #		Tranforms to be applied to each vertex group in object space, according
 #		to the weights stored in the associated mesh.
@@ -253,7 +253,7 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #	transform_array_offset : integer
 #
-#		float transform_array[#armature_table][16]
+#		float transform_array[#armature_table][4][4]
 #
 #		Array of bone transforms in object local space. Stored as 4x4 column
 #		major order matricies. Position (0,0,0) in bone space is the location
