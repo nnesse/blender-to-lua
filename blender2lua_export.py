@@ -562,7 +562,7 @@ def save_b2l(operator, context, filepath=""):
 					aobj = modifier.object
 					break
 
-			def write_object_frame(aobj):
+			def write_object_frame():
 				flatten_4x4mat(object_transform_array, obj.matrix_local)
 				for group in obj.vertex_groups:
 					if aobj and (group.name in aobj.pose.bones):
@@ -582,7 +582,7 @@ def save_b2l(operator, context, filepath=""):
 			num_frames = 0
 			if (obj.animation_data) or (aobj and aobj.animation_data):
 				while frame < scene.frame_end:
-					write_object_frame(aobj)
+					write_object_frame()
 					frame = frame + 1
 					scene.frame_set(frame)
 					num_frames = num_frames + 1
