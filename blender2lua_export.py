@@ -181,9 +181,9 @@ from bpy_extras.io_utils import (ExportHelper)
 #
 #		Number of verticies in mesh
 #
-#	uv_layers : {layer_name, ...}
+#	uv_layers : { [uv_layer_name] = uv_layer_table, ...}
 #
-#		Names of UV layers
+#		The UV layers for this mesh
 #
 #	num_vertex_weights : integer
 #
@@ -202,10 +202,6 @@ from bpy_extras.io_utils import (ExportHelper)
 #	vertex_normal_array_offset : float normal_array[num_verticies][3]
 #
 #		Vertex normals
-#
-#	uv_array_offset: float uv[num_verticies][#uv_layers][2]
-#
-#		UV coordinate arrays
 #
 #	weights_per_vertex : integer
 #
@@ -226,6 +222,18 @@ from bpy_extras.io_utils import (ExportHelper)
 #		weight order so that the largest weights appear first. If a vertex belongs to fewer than
 #		'weights_per_vertex' groups then the array is padded with elements with 'group_index'
 #		set to -1 and `weight` set to zero.
+#
+# uv_layer_table:
+#
+#	uv_array_offset: float uv[num_verticies][2]
+#
+#		UV coordinate arrays
+#
+#	tangent_array_offset: struct { float tangent[3]; float bitangent_sign; } tangent[num_verticies];
+#
+#		Defines the tangent space for this UV mapping. The bitangent vector is given by:
+#
+#			cross(tangent, normal) * bitangent_sign
 #
 # submesh_table:
 #
@@ -330,8 +338,6 @@ def write_mesh(write, blob_file, materials, name, mesh):
 
 	num_uv_layers = len(mesh.uv_layers)
 
-	if num_uv_layers > 0:
-		mesh.calc_tangents()
 	smooth_groups, num_groups = mesh.calc_smooth_groups()
 
 	if len(mesh.polygons) == 0:
@@ -342,8 +348,6 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	index_array = array.array('H')  #Vertex index triplets for mesh triangles
 	vertex_co_array = array.array('f') #Vertex coordinates
 	vertex_normal_array = array.array('f') #Vertex normals
-	tangent_array = array.array('f') #Vertex tangent and bitangent
-	uv_array = array.array('f') #Vertex normals
 	weights_array = array.array('h') # Vertex weights
 	vertex_count = 0
 
@@ -352,6 +356,7 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	weights_per_vert = 0
 
 	vertex_list = []
+	vertex_list_mesh_loop = []
 
 	for polygon_index, polygon in enumerate(mesh.polygons):
 		if polygon.material_index not in submeshes:
@@ -374,12 +379,6 @@ def write_mesh(write, blob_file, materials, name, mesh):
 				vertex_count = vertex_count + 1
 				vertex_co_array.extend(vertex.undeformed_co)
 				vertex_normal_array.extend(mesh_loop.normal)
-				if num_uv_layers > 0:
-					tangent_array.extend(mesh_loop.tangent)
-					tangent_array.append(mesh_loop.bitangent_sign)
-
-				for uv_layer in mesh.uv_layers:
-					uv_array.extend(uv_layer.data[loop_index].uv)
 
 				groups_copy = []
 				for elem in vertex.groups:
@@ -387,11 +386,10 @@ def write_mesh(write, blob_file, materials, name, mesh):
 					groups_copy.append(temp)
 
 				groups_sorted = sorted(groups_copy, key = lambda x: x[1], reverse = True)
-
+				vertex_list_mesh_loop.append(loop_index)
 				vertex_list.append(groups_sorted)
 				weights_per_vert = max(weights_per_vert, len(groups_sorted))
 			loop_to_vertex_num[loop_index] = vertex_num
-
 
 	if weights_per_vert > 0:
 		for vertex in vertex_list:
@@ -406,10 +404,27 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	write("\t['%s'] = {\n" % name)
 	write("\t\tnum_triangles = %d,\n" % len(mesh.polygons))
 	write("\t\tnum_verticies = %d,\n" % vertex_count)
-	write("\t\tuv_layers = {")
+	write("\t\tuv_layers = {\n")
 	for uv_layer in mesh.uv_layers:
-		write("%s," % lua_string(uv_layer.name))
-	write("},\n");
+		tangent_array = array.array('f') #Vertex tangent and bitangent
+		uv_array = array.array('f') #Vertex normals
+		mesh.calc_tangents(uv_layer.name)
+		write("\t\t\t[%s] = {\n" % lua_string(uv_layer.name))
+
+		for loop_index in vertex_list_mesh_loop:
+			mesh_loop = mesh.loops[loop_index]
+			tangent_array.extend(mesh_loop.tangent)
+			tangent_array.append(mesh_loop.bitangent_sign)
+			uv_array.extend(uv_layer.data[loop_index].uv)
+
+		write("\t\t\t\tuv_array_offset = %d,\n" % blob_file.tell())
+		uv_array.tofile(blob_file)
+		write("\t\t\t\ttangent_array_offset = %d,\n" % blob_file.tell())
+		tangent_array.tofile(blob_file)
+
+		write("\t\t\t},\n")
+		mesh.free_tangents()
+	write("\t\t},\n");
 
 	write("\t\tweights_per_vertex = %d,\n" % weights_per_vert);
 
@@ -433,14 +448,9 @@ def write_mesh(write, blob_file, materials, name, mesh):
 	vertex_co_array.tofile(blob_file)
 	write("\t\tvertex_normal_array_offset = %d,\n" % blob_file.tell())
 	vertex_normal_array.tofile(blob_file)
-	write("\t\tuv_array_offset = %d,\n" % blob_file.tell())
-	uv_array.tofile(blob_file)
 	if weights_per_vert > 0:
 		write("\t\tweights_array_offset = %d,\n" % blob_file.tell())
 		weights_array.tofile(blob_file)
-	if num_uv_layers > 0:
-		write("\t\ttangent_array_offset = %d,\n" % blob_file.tell())
-		tangent_array.tofile(blob_file)
 	write("\t},\n");
 	bpy.data.meshes.remove(mesh)
 	return
