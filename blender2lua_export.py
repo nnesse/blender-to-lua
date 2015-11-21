@@ -483,7 +483,7 @@ def write_armature(write, blob_file, armature):
 def flatten_4x4mat(dest, src):
 	for i in range(4):
 		for j in range(4):
-			dest.append(src[i][j])
+			dest.append(src[j][i])
 
 def write_object(scene, write, blob_file, obj):
 	write("\t[%s] = {\n" % lua_string(obj.name))
